@@ -58,7 +58,8 @@ func AddSystemdEFIStubProfile(profile *PCRProtectionProfile, params *SystemdEFIS
 		return errors.New("no kernel commandlines specified")
 	}
 
-	var subProfiles []*PCRProtectionProfile
+	branchPoint := profile.AddBranchPoint()
+
 	for _, cmdline := range params.KernelCmdlines {
 		event := tcglog.SystemdEFIStubEventData{Str: cmdline}
 		var buf bytes.Buffer
@@ -69,9 +70,8 @@ func AddSystemdEFIStubProfile(profile *PCRProtectionProfile, params *SystemdEFIS
 		h := params.PCRAlgorithm.NewHash()
 		buf.WriteTo(h)
 
-		subProfiles = append(subProfiles, NewPCRProtectionProfile().ExtendPCR(params.PCRAlgorithm, params.PCRIndex, h.Sum(nil)))
+		branchPoint.NewBranch().ExtendPCR(params.PCRAlgorithm, params.PCRIndex, h.Sum(nil))
 	}
 
-	profile.AddProfileOR(subProfiles...)
 	return nil
 }

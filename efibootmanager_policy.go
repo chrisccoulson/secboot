@@ -200,21 +200,25 @@ func computePeImageDigest(alg tpm2.HashAlgorithmId, image EFIImage) (tpm2.Digest
 	return h.Sum(nil), nil
 }
 
-type bootManagerCodePolicyGenBranch struct {
-	profile  *PCRProtectionProfile
-	branches []*PCRProtectionProfile
-}
-
-func (n *bootManagerCodePolicyGenBranch) branch() *bootManagerCodePolicyGenBranch {
-	b := &bootManagerCodePolicyGenBranch{profile: NewPCRProtectionProfile()}
-	n.branches = append(n.branches, b.profile)
-	return b
-}
-
 // bmLoadEventAndBranch binds together a EFIImageLoadEvent and the branch that the event needs to be applied to.
 type bmLoadEventAndBranch struct {
-	event  *EFIImageLoadEvent
-	branch *bootManagerCodePolicyGenBranch
+	event   *EFIImageLoadEvent
+	profile *PCRProtectionProfile
+}
+
+func (b *bmLoadEventAndBranch) branch(events ...*EFIImageLoadEvent) (out []*bmLoadEventAndBranch) {
+	switch {
+	case len(events) == 0:
+		return
+	case len(events) == 1:
+		return []*bmLoadEventAndBranch{&bmLoadEventAndBranch{event: events[0], profile: b.profile}}
+	}
+
+	branchPoint := b.profile.AddBranchPoint()
+	for _, e := range events {
+		out = append(out, &bmLoadEventAndBranch{event: e, profile: branchPoint.NewBranch()})
+	}
+	return
 }
 
 // EFIBootManagerProfileParams provide the arguments to AddEFIBootManagerProfile.
@@ -291,21 +295,10 @@ func AddEFIBootManagerProfile(profile *PCRProtectionProfile, params *EFIBootMana
 		}
 	}
 
-	root := bootManagerCodePolicyGenBranch{profile: profile}
-	allBranches := []*bootManagerCodePolicyGenBranch{&root}
-
 	var loadEvents []*bmLoadEventAndBranch
 	var nextLoadEvents []*bmLoadEventAndBranch
 
-	if len(params.LoadSequences) == 1 {
-		loadEvents = append(loadEvents, &bmLoadEventAndBranch{event: params.LoadSequences[0], branch: &root})
-	} else {
-		for _, e := range params.LoadSequences {
-			branch := root.branch()
-			allBranches = append(allBranches, branch)
-			loadEvents = append(loadEvents, &bmLoadEventAndBranch{event: e, branch: branch})
-		}
-	}
+	loadEvents = append(loadEvents, (&bmLoadEventAndBranch{profile: profile}).branch(params.LoadSequences...)...)
 
 	for len(loadEvents) > 0 {
 		e := loadEvents[0]
@@ -315,32 +308,14 @@ func AddEFIBootManagerProfile(profile *PCRProtectionProfile, params *EFIBootMana
 		if err != nil {
 			return err
 		}
-		e.branch.profile.ExtendPCR(params.PCRAlgorithm, bootManagerCodePCR, digest)
+		e.profile.ExtendPCR(params.PCRAlgorithm, bootManagerCodePCR, digest)
 
-		if len(e.event.Next) == 1 {
-			nextLoadEvents = append(nextLoadEvents, &bmLoadEventAndBranch{event: e.event.Next[0], branch: e.branch})
-		} else {
-			for _, n := range e.event.Next {
-				branch := e.branch.branch()
-				nextLoadEvents = append(nextLoadEvents, &bmLoadEventAndBranch{event: n, branch: branch})
-				allBranches = append(allBranches, branch)
-			}
-		}
+		nextLoadEvents = append(nextLoadEvents, e.branch(e.event.Next...)...)
 
 		if len(loadEvents) == 0 {
 			loadEvents = nextLoadEvents
 			nextLoadEvents = nil
 		}
-	}
-
-	// Iterate over all of the branch points starting from the root and creates a tree of
-	// sub-profiles with AddProfileOR. The ordering doesn't matter here, because each subprofile
-	// is already complete
-	for _, b := range allBranches {
-		if len(b.branches) == 0 {
-			continue
-		}
-		b.profile.AddProfileOR(b.branches...)
 	}
 
 	return nil

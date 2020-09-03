@@ -300,9 +300,13 @@ func TestSealKeyToTPMErrorHandling(t *testing.T) {
 	t.Run("InvalidPCRProfile", func(t *testing.T) {
 		pcrProfile := NewPCRProtectionProfile().
 			AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
-			AddProfileOR(
-				NewPCRProtectionProfile(),
-				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 8))
+			AddBranchPoint().
+			NewBranch().
+			EndBranch().
+			NewBranch().
+			AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 8).
+			EndBranch().
+			EndBranchPoint()
 		err := run(t, "", &KeyCreationParams{PCRProfile: pcrProfile, PINHandle: 0x01810000})
 		if err == nil {
 			t.Fatalf("Expected an error")
