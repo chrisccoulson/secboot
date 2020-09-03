@@ -102,10 +102,10 @@ func (s *pcrProfileSuite) TestOR1(c *C) {
 	s.testPCRProtectionProfile(c, &testPCRProtectionProfileData{
 		alg: tpm2.HashAlgorithmSHA256,
 		profile: NewPCRProtectionProfile().
-			AddProfileOR(
+			AddBranches(
 				NewPCRProtectionProfile().AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")),
 				NewPCRProtectionProfile().AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo2"))).
-			AddProfileOR(
+			AddBranches(
 				NewPCRProtectionProfile().AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")),
 				NewPCRProtectionProfile().AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar2"))),
 		values: []tpm2.PCRValues{
@@ -141,7 +141,7 @@ func (s *pcrProfileSuite) TestOR2(c *C) {
 	// Verify that (A1 && B1) || (A2 && B2) produces 2 outcomes
 	s.testPCRProtectionProfile(c, &testPCRProtectionProfileData{
 		alg: tpm2.HashAlgorithmSHA256,
-		profile: NewPCRProtectionProfile().AddProfileOR(
+		profile: NewPCRProtectionProfile().AddBranches(
 			NewPCRProtectionProfile().
 				AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
 				AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")),
@@ -212,7 +212,7 @@ func (s *pcrProfileSuite) TestOR3(c *C) {
 		profile: NewPCRProtectionProfile().
 			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
 			AddPCRValue(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")).
-			AddProfileOR(
+			AddBranches(
 				NewPCRProtectionProfile().
 					ExtendPCR(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event1")).
 					ExtendPCR(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event2")),
@@ -243,7 +243,7 @@ func (s *pcrProfileSuite) TestOR4(c *C) {
 		profile: NewPCRProtectionProfile().
 			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
 			AddPCRValue(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")).
-			AddProfileOR(
+			AddBranches(
 				NewPCRProtectionProfile().
 					ExtendPCR(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event1")).
 					AddPCRValue(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")),
@@ -309,7 +309,7 @@ func (s *pcrProfileSuite) TestDeDuplicate(c *C) {
 	// Verify that (A1 && B1) || (A1 && B1) is de-duplicated
 	s.testPCRProtectionProfile(c, &testPCRProtectionProfileData{
 		alg: tpm2.HashAlgorithmSHA256,
-		profile: NewPCRProtectionProfile().AddProfileOR(
+		profile: NewPCRProtectionProfile().AddBranches(
 			NewPCRProtectionProfile().
 				AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
 				AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")),
@@ -332,7 +332,7 @@ func (s *pcrProfileSuite) TestEmptyProfileOR(c *C) {
 		alg: tpm2.HashAlgorithmSHA256,
 		profile: NewPCRProtectionProfile().
 			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
-			AddProfileOR().
+			AddBranches().
 			AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")),
 		values: []tpm2.PCRValues{
 			{
@@ -345,11 +345,161 @@ func (s *pcrProfileSuite) TestEmptyProfileOR(c *C) {
 	})
 }
 
+func (s *pcrProfileSuite) TestOR1B(c *C) {
+	// Verify that (A1 || A2) && (B1 || B2) produces 4 outcomes
+	s.testPCRProtectionProfile(c, &testPCRProtectionProfileData{
+		alg: tpm2.HashAlgorithmSHA256,
+		profile: NewPCRProtectionProfile().
+			AddBranchPoint(). // Begin (A1 || A2)
+			NewBranch().      // Begin A1
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
+			EndBranch(). // End A1
+			NewBranch(). // Begin A2
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo2")).
+			EndBranch().      // End A2
+			EndBranchPoint(). // End (A1 || A2)
+			AddBranchPoint(). // Begin (B1 || B2)
+			NewBranch().      // Begin B1
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")).
+			EndBranch(). // End B1
+			NewBranch(). // Begin B2
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar2")).
+			EndBranch().      // End B2
+			EndBranchPoint(), // End (B1 || B2)
+		values: []tpm2.PCRValues{
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo"),
+					8: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar"),
+				},
+			},
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo2"),
+					8: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar"),
+				},
+			},
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo"),
+					8: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar2"),
+				},
+			},
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo2"),
+					8: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar2"),
+				},
+			},
+		},
+	})
+}
+
+func (s *pcrProfileSuite) TestOR2B(c *C) {
+	// Verify that (A1 && B1) || (A2 && B2) produces 2 outcomes
+	s.testPCRProtectionProfile(c, &testPCRProtectionProfileData{
+		alg: tpm2.HashAlgorithmSHA256,
+		profile: NewPCRProtectionProfile().
+			AddBranchPoint(). // Begin (A1 && B1) || (A2 && B2)
+			NewBranch().      // Begin (A1 && B1)
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")).
+			EndBranch(). // End (A1 && B1)
+			NewBranch(). // Begin (A2 && B2)
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo2")).
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar2")).
+			EndBranch().      // End (A2 && B2)
+			EndBranchPoint(), // End (A1 && B1) || (A2 && B2)
+		values: []tpm2.PCRValues{
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo"),
+					8: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar"),
+				},
+			},
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo2"),
+					8: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar2"),
+				},
+			},
+		},
+	})
+}
+
+func (s *pcrProfileSuite) TestOR3B(c *C) {
+	// Verify that ExtendPCR inside subbranches with initial PCR values works as expected
+	s.testPCRProtectionProfile(c, &testPCRProtectionProfileData{
+		alg: tpm2.HashAlgorithmSHA256,
+		profile: NewPCRProtectionProfile().
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")).
+			AddBranchPoint().
+			NewBranch().
+			ExtendPCR(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event1")).
+			ExtendPCR(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event2")).
+			EndBranch().
+			NewBranch().
+			ExtendPCR(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event3")).
+			ExtendPCR(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event4")).
+			EndBranch().
+			EndBranchPoint(),
+		values: []tpm2.PCRValues{
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7:  tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo", "event1"),
+					12: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar", "event2"),
+				},
+			},
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7:  tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo", "event3"),
+					12: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar", "event4"),
+				},
+			},
+		},
+	})
+}
+
+func (s *pcrProfileSuite) TestOR4B(c *C) {
+	// Verify that AddPCRValue inside sub-branch with initial PCR values works as expected
+	s.testPCRProtectionProfile(c, &testPCRProtectionProfileData{
+		alg: tpm2.HashAlgorithmSHA256,
+		profile: NewPCRProtectionProfile().
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")).
+			AddBranchPoint().
+			NewBranch().
+			ExtendPCR(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event1")).
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")).
+			EndBranch().
+			NewBranch().
+			AddPCRValue(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar")).
+			ExtendPCR(tpm2.HashAlgorithmSHA256, 12, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "event4")).
+			EndBranch().
+			EndBranchPoint(),
+		values: []tpm2.PCRValues{
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7:  tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo", "event1"),
+					12: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo"),
+				},
+			},
+			{
+				tpm2.HashAlgorithmSHA256: {
+					7:  tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar"),
+					12: tpm2test.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "bar", "event4"),
+				},
+			},
+		},
+	})
+}
+
 func (s *pcrProfileSuite) TestProfileString(c *C) {
 	profile := NewPCRProtectionProfile().
 		AddPCRValue(tpm2.HashAlgorithmSHA256, 7, make([]byte, tpm2.HashAlgorithmSHA256.Size())).
 		AddPCRValue(tpm2.HashAlgorithmSHA256, 8, make([]byte, tpm2.HashAlgorithmSHA256.Size())).
-		AddProfileOR(
+		AddBranches(
 			NewPCRProtectionProfile().
 				ExtendPCR(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo1")).
 				ExtendPCR(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "bar1")),
@@ -357,10 +507,11 @@ func (s *pcrProfileSuite) TestProfileString(c *C) {
 				ExtendPCR(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "bar1")).
 				ExtendPCR(tpm2.HashAlgorithmSHA256, 8, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo1"))).
 		ExtendPCR(tpm2.HashAlgorithmSHA256, 7, tpm2test.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "end"))
+
 	expectedTpl := `
  AddPCRValue(TPM_ALG_SHA256, 7, %[1]x)
  AddPCRValue(TPM_ALG_SHA256, 8, %[1]x)
- AddProfileOR(
+ BranchPoint(
    Branch 0 {
     ExtendPCR(TPM_ALG_SHA256, 7, %[2]x)
     ExtendPCR(TPM_ALG_SHA256, 8, %[3]x)

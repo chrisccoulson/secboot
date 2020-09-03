@@ -57,12 +57,12 @@ func AddSystemdStubProfile(profile *secboot_tpm2.PCRProtectionProfile, params *S
 		return errors.New("no kernel commandlines specified")
 	}
 
-	var subProfiles []*secboot_tpm2.PCRProtectionProfile
+	branchPoint := profile.AddBranchPoint()
+
 	for _, cmdline := range params.KernelCmdlines {
 		digest := tcglog.ComputeSystemdEFIStubCommandlineDigest(params.PCRAlgorithm.GetHash(), cmdline)
-		subProfiles = append(subProfiles, secboot_tpm2.NewPCRProtectionProfile().ExtendPCR(params.PCRAlgorithm, params.PCRIndex, digest))
+		branchPoint.NewBranch().ExtendPCR(params.PCRAlgorithm, params.PCRIndex, digest)
 	}
 
-	profile.AddProfileOR(subProfiles...)
 	return nil
 }

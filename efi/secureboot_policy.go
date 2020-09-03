@@ -408,8 +408,11 @@ type secureBootPolicyGen struct {
 type secureBootPolicyGenBranch struct {
 	gen *secureBootPolicyGen
 
-	profile     *secboot_tpm2.PCRProtectionProfile // The PCR profile containing the instructions for this branch
-	subBranches []*secureBootPolicyGenBranch       // Sub-branches, if this has been branched
+	parent    *secureBootPolicyGenBranch
+	nBranches int
+	branched  bool
+
+	profile *secboot_tpm2.PCRProtectionProfile // The PCR profile containing the instructions for this branch
 
 	dbUpdateLevel              int             // The number of EFI signature database updates applied in this branch
 	dbSet                      secureBootDbSet // The signature database set associated with this branch
@@ -418,29 +421,63 @@ type secureBootPolicyGenBranch struct {
 	shimFlags                  shimFlags       // Flags associated with shim in this branch
 }
 
-// branch creates a branch point in the current branch if one doesn't exist already (although inserting this branch point with
-// PCRProtectionProfile.AddProfileOR is deferred until later), and creates a new sub-branch at the current branch point. Once
+// abort marks this branch as aborted so that it is omitted from the generated PCR policy. If all sibling branches have also been
+// aborted, then the parent branch will also be aborted in the same way.
+func (b *secureBootPolicyGenBranch) abort() {
+	for {
+		b.profile.AbortBranch()
+		b.profile = nil
+
+		p := b.parent
+		if p == nil {
+			break
+		}
+
+		p.nBranches--
+		if p.nBranches > 0 {
+			break
+		}
+
+		b = p
+	}
+}
+
+func (b *secureBootPolicyGenBranch) aborted() bool {
+	return b.profile == nil
+}
+
+// branch creates a branch point in the current branch and creates the specified number of branches from that branch point. Once
 // this has been called, no more instructions can be inserted in to the current branch.
-func (b *secureBootPolicyGenBranch) branch() *secureBootPolicyGenBranch {
-	c := &secureBootPolicyGenBranch{gen: b.gen, profile: secboot_tpm2.NewPCRProtectionProfile()}
-	b.subBranches = append(b.subBranches, c)
+func (b *secureBootPolicyGenBranch) branch(n int) (out []*secureBootPolicyGenBranch) {
+	if b.branched {
+		panic("this branch has already been branched")
+	}
+	b.branched = true
 
-	// Preserve the context associated with this branch
-	c.dbUpdateLevel = b.dbUpdateLevel
-	c.dbSet = b.dbSet
-	c.firmwareVerificationEvents = make(tpm2.DigestList, len(b.firmwareVerificationEvents))
-	copy(c.firmwareVerificationEvents, b.firmwareVerificationEvents)
-	c.shimVerificationEvents = make(tpm2.DigestList, len(b.shimVerificationEvents))
-	copy(c.shimVerificationEvents, b.shimVerificationEvents)
-	c.shimFlags = b.shimFlags
+	branchPoint := b.profile.AddBranchPoint()
+	for i := 0; i < n; i++ {
+		c := &secureBootPolicyGenBranch{gen: b.gen, parent: b, profile: branchPoint.NewBranch()}
 
-	return c
+		// Preserve the context associated with this branch
+		c.dbUpdateLevel = b.dbUpdateLevel
+		c.dbSet = b.dbSet
+		c.firmwareVerificationEvents = make(tpm2.DigestList, len(b.firmwareVerificationEvents))
+		copy(c.firmwareVerificationEvents, b.firmwareVerificationEvents)
+		c.shimVerificationEvents = make(tpm2.DigestList, len(b.shimVerificationEvents))
+		copy(c.shimVerificationEvents, b.shimVerificationEvents)
+		c.shimFlags = b.shimFlags
+
+		out = append(out, c)
+	}
+	b.nBranches = n
+
+	return
 }
 
 // extendMeasurement extends the supplied digest to this branch.
 func (b *secureBootPolicyGenBranch) extendMeasurement(digest tpm2.Digest) {
-	if len(b.subBranches) > 0 {
-		panic("This branch has already been branched")
+	if b.branched {
+		panic("this branch has already been branched")
 	}
 	b.profile.ExtendPCR(b.gen.pcrAlgorithm, secureBootPCR, digest)
 }
@@ -651,7 +688,7 @@ func (b *secureBootPolicyGenBranch) hasVerificationEventBeenMeasuredBy(digest tp
 // certificate that exists in this branch, then this branch will be marked as unbootable and it will be omitted from the final PCR
 // profile.
 func (b *secureBootPolicyGenBranch) computeAndExtendVerificationMeasurement(sigs []*authenticodeSignerAndIntermediates, source ImageLoadEventSource) error {
-	if b.profile == nil {
+	if b.aborted() {
 		// This branch is going to be excluded because it is unbootable.
 		return nil
 	}
@@ -714,7 +751,7 @@ Outer:
 
 	if authority == nil {
 		// Mark this branch as unbootable by clearing its PCR profile
-		b.profile = nil
+		b.abort()
 		return nil
 	}
 
@@ -755,15 +792,29 @@ type sbLoadEventAndBranches struct {
 	branches []*secureBootPolicyGenBranch
 }
 
-func (e *sbLoadEventAndBranches) branch(event *ImageLoadEvent) *sbLoadEventAndBranches {
-	var branches []*secureBootPolicyGenBranch
+func (e *sbLoadEventAndBranches) branch(events ...*ImageLoadEvent) (out []*sbLoadEventAndBranches) {
+	switch {
+	case len(events) == 0:
+		return
+	case len(events) == 1:
+		return []*sbLoadEventAndBranches{&sbLoadEventAndBranches{event: events[0], branches: e.branches}}
+	}
+
+	var newBranches [][]*secureBootPolicyGenBranch
 	for _, b := range e.branches {
-		if b.profile == nil {
+		if b.aborted() {
 			continue
 		}
-		branches = append(branches, b.branch())
+		newBranches = append(newBranches, b.branch(len(events)))
 	}
-	return &sbLoadEventAndBranches{event, branches}
+	for i, e := range events {
+		n := &sbLoadEventAndBranches{event: e}
+		for _, b := range newBranches {
+			n.branches = append(n.branches, b[i])
+		}
+		out = append(out, n)
+	}
+	return
 }
 
 // computeAndExtendVerificationMeasurement computes a measurement for the the authentication of the EFI image obtained from r and
@@ -940,32 +991,19 @@ func (g *secureBootPolicyGen) run(profile *secboot_tpm2.PCRProtectionProfile, si
 	// Process the pre-OS events for the current signature DB and then with each pending update applied
 	// in turn.
 	var roots []*secureBootPolicyGenBranch
+	branchPoint := profile.AddBranchPoint()
 	for i := 0; i <= len(g.sigDbUpdates); i++ {
-		branch := &secureBootPolicyGenBranch{gen: g, profile: secboot_tpm2.NewPCRProtectionProfile(), dbUpdateLevel: i}
+		branch := &secureBootPolicyGenBranch{gen: g, profile: branchPoint.NewBranch(), dbUpdateLevel: i}
 		if err := branch.processPreOSEvents(g.events, g.sigDbUpdates[0:i], sigDbUpdateQuirkMode); err != nil {
 			return xerrors.Errorf("cannot process pre-OS events from event log: %w", err)
 		}
 		roots = append(roots, branch)
 	}
 
-	allBranches := make([]*secureBootPolicyGenBranch, len(roots))
-	copy(allBranches, roots)
-
 	var loadEvents []*sbLoadEventAndBranches
 	var nextLoadEvents []*sbLoadEventAndBranches
 
-	if len(g.loadSequences) == 1 {
-		loadEvents = append(loadEvents, &sbLoadEventAndBranches{event: g.loadSequences[0], branches: roots})
-	} else {
-		for _, e := range g.loadSequences {
-			var branches []*secureBootPolicyGenBranch
-			for _, b := range roots {
-				branches = append(branches, b.branch())
-			}
-			allBranches = append(allBranches, branches...)
-			loadEvents = append(loadEvents, &sbLoadEventAndBranches{event: e, branches: branches})
-		}
-	}
+	loadEvents = append(loadEvents, (&sbLoadEventAndBranches{branches: roots}).branch(g.loadSequences...)...)
 
 	for len(loadEvents) > 0 {
 		e := loadEvents[0]
@@ -975,15 +1013,7 @@ func (g *secureBootPolicyGen) run(profile *secboot_tpm2.PCRProtectionProfile, si
 			return xerrors.Errorf("cannot process OS load event for %s: %w", e.event.Image, err)
 		}
 
-		if len(e.event.Next) == 1 {
-			nextLoadEvents = append(nextLoadEvents, &sbLoadEventAndBranches{event: e.event.Next[0], branches: e.branches})
-		} else {
-			for _, n := range e.event.Next {
-				ne := e.branch(n)
-				allBranches = append(allBranches, ne.branches...)
-				nextLoadEvents = append(nextLoadEvents, ne)
-			}
-		}
+		nextLoadEvents = append(nextLoadEvents, e.branch(e.event.Next...)...)
 
 		if len(loadEvents) == 0 {
 			loadEvents = nextLoadEvents
@@ -991,50 +1021,9 @@ func (g *secureBootPolicyGen) run(profile *secboot_tpm2.PCRProtectionProfile, si
 		}
 	}
 
-	for i := len(allBranches) - 1; i >= 0; i-- {
-		b := allBranches[i]
-
-		if len(b.subBranches) == 0 {
-			// This is a leaf branch
-			continue
-		}
-
-		var subProfiles []*secboot_tpm2.PCRProtectionProfile
-		for _, sb := range b.subBranches {
-			if sb.profile == nil {
-				// This sub-branch has been marked unbootable
-				continue
-			}
-			subProfiles = append(subProfiles, sb.profile)
-		}
-
-		if len(subProfiles) == 0 {
-			// All sub branches are unbootable, so ensure our parent branch omits us too.
-			b.profile = nil
-			continue
-		}
-
-		b.profile.AddProfileOR(subProfiles...)
-	}
-
-	validPathsForCurrentDb := false
-	var subProfiles []*secboot_tpm2.PCRProtectionProfile
-	for _, b := range roots {
-		if b.profile == nil {
-			// This branch has no bootable paths
-			continue
-		}
-		if b.dbUpdateLevel == 0 {
-			validPathsForCurrentDb = true
-		}
-		subProfiles = append(subProfiles, b.profile)
-	}
-
-	if !validPathsForCurrentDb {
+	if roots[0].aborted() {
 		return errors.New("no bootable paths with current EFI signature database")
 	}
-
-	profile.AddProfileOR(subProfiles...)
 
 	return nil
 }
@@ -1178,16 +1167,14 @@ func AddSecureBootPolicyProfile(profile *secboot_tpm2.PCRProtectionProfile, para
 
 	gen := &secureBootPolicyGen{params.PCRAlgorithm, env, params.LoadSequences, log.Events, sigDbUpdates}
 
-	profile1 := secboot_tpm2.NewPCRProtectionProfile()
-	if err := gen.run(profile1, sigDbUpdateQuirkModeNone); err != nil {
+	branchPoint := profile.AddBranchPoint()
+	if err := gen.run(branchPoint.NewBranch(), sigDbUpdateQuirkModeNone); err != nil {
 		return xerrors.Errorf("cannot compute secure boot policy profile: %w", err)
 	}
 
-	profile2 := secboot_tpm2.NewPCRProtectionProfile()
-	if err := gen.run(profile2, sigDbUpdateQuirkModeDedupIgnoresOwner); err != nil {
+	if err := gen.run(branchPoint.NewBranch(), sigDbUpdateQuirkModeDedupIgnoresOwner); err != nil {
 		return xerrors.Errorf("cannot compute secure boot policy profile: %w", err)
 	}
 
-	profile.AddProfileOR(profile1, profile2)
 	return nil
 }

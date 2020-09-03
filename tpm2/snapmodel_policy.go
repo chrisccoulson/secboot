@@ -165,7 +165,7 @@ func AddSnapModelProfile(profile *PCRProtectionProfile, params *SnapModelProfile
 
 	profile.ExtendPCR(params.PCRAlgorithm, params.PCRIndex, computeSnapSystemEpochDigest(params.PCRAlgorithm, zeroSnapSystemEpoch))
 
-	var subProfiles []*PCRProtectionProfile
+	branchPoint := profile.AddBranchPoint()
 	for _, model := range params.Models {
 		if model == nil {
 			return errors.New("nil model")
@@ -177,10 +177,9 @@ func AddSnapModelProfile(profile *PCRProtectionProfile, params *SnapModelProfile
 		if err != nil {
 			return err
 		}
-		subProfiles = append(subProfiles, NewPCRProtectionProfile().ExtendPCR(params.PCRAlgorithm, params.PCRIndex, digest))
+		branchPoint.NewBranch().ExtendPCR(params.PCRAlgorithm, params.PCRIndex, digest)
 	}
 
-	profile.AddProfileOR(subProfiles...)
 	return nil
 }
 

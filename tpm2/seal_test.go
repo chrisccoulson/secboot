@@ -449,7 +449,7 @@ func (s *sealSuite) TestSealKeyToTPMErrorHandlingPCRPolicyCounterExists(c *C) {
 func (s *sealSuite) TestSealKeyToTPMErrorHandlingInvalidPCRProfile(c *C) {
 	err := s.testSealKeyToTPMErrorHandling(c, &KeyCreationParams{
 		PCRProfile: tpm2test.NewPCRProfileFromCurrentValues(tpm2.HashAlgorithmSHA256, []int{7}).
-			AddProfileOR(
+			AddBranches(
 				NewPCRProtectionProfile(),
 				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 8)),
 		PCRPolicyCounterHandle: s.NextAvailableHandle(c, 0x01810000)})
