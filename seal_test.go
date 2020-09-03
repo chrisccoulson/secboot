@@ -354,9 +354,8 @@ func TestSealKeyToTPMErrorHandling(t *testing.T) {
 
 	t.Run("InvalidPCRProfile", func(t *testing.T) {
 		pcrProfile := NewPCRProtectionProfile().
-			AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
-			AddProfileOR(
-				NewPCRProtectionProfile(),
+			AddBranches(
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
 				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 8))
 		err := run(t, "", &KeyCreationParams{PCRProfile: pcrProfile, PCRPolicyCounterHandle: 0x01810000})
 		if err == nil {
@@ -456,10 +455,11 @@ func TestUpdateKeyPCRProtectionPolicy(t *testing.T) {
 		}
 
 		// Update policy with 2 branches
-		newProfile := NewPCRProtectionProfile().AddProfileOR(
-			NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
-			NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
-				ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo")))
+		newProfile := NewPCRProtectionProfile().
+			AddBranches(
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
+					ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo")))
 		update(t, keyFile, authKey, newProfile)
 
 		// Check that unseal fails with the backup file
@@ -497,10 +497,11 @@ func TestUpdateKeyPCRProtectionPolicy(t *testing.T) {
 		}
 
 		// Update policy with 2 branches
-		newProfile := NewPCRProtectionProfile().AddProfileOR(
-			NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
-			NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
-				ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo")))
+		newProfile := NewPCRProtectionProfile().
+			AddBranches(
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
+					ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo")))
 		update(t, keyFile, authKey, newProfile)
 
 		// Check that the backup file still works
@@ -594,10 +595,11 @@ func TestUpdateKeyPCRProtectionPolicyMultiple(t *testing.T) {
 		}
 
 		// Update policy with 2 branches
-		newProfile := NewPCRProtectionProfile().AddProfileOR(
-			NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
-			NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
-				ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo")))
+		newProfile := NewPCRProtectionProfile().
+			AddBranches(
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
+					ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo")))
 		update(t, keyFiles, authKey, newProfile)
 
 		// Check that unseal fails with the backup files
@@ -645,10 +647,11 @@ func TestUpdateKeyPCRProtectionPolicyMultiple(t *testing.T) {
 		}
 
 		// Update policy with 2 branches
-		newProfile := NewPCRProtectionProfile().AddProfileOR(
-			NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
-			NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
-				ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo")))
+		newProfile := NewPCRProtectionProfile().
+			AddBranches(
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7),
+				NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
+					ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo")))
 		update(t, keyFiles, authKey, newProfile)
 
 		// Check that unseal still succeeds with the backup files
