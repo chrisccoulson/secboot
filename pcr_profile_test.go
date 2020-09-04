@@ -385,6 +385,8 @@ func TestPCRProtectionProfileString(t *testing.T) {
 		ExtendPCR(tpm2.HashAlgorithmSHA256, 8, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "foo1")).
 		EndBranch().
 		EndBranchPoint().
+		AddBranchPoint().
+		EndBranchPoint().
 		ExtendPCR(tpm2.HashAlgorithmSHA256, 7, testutil.MakePCREventDigest(tpm2.HashAlgorithmSHA256, "end"))
 	expectedTpl := `
  AddPCRValue(TPM_ALG_SHA256, 7, %[1]x)
@@ -398,6 +400,8 @@ func TestPCRProtectionProfileString(t *testing.T) {
     ExtendPCR(TPM_ALG_SHA256, 7, %[3]x)
     ExtendPCR(TPM_ALG_SHA256, 8, %[2]x)
    }
+ )
+ BranchPoint(
  )
  ExtendPCR(TPM_ALG_SHA256, 7, %[4]x)
 `

@@ -194,11 +194,6 @@ func (iter *pcrProtectionProfileIterator) next() pcrProtectionProfileInstr {
 
 		switch i := instr.(type) {
 		case *pcrProtectionProfileBranchPointInstr:
-			if len(i.branches) == 0 {
-				// If this is an empty branch point, don't return this instruction because there
-				// won't be a corresponding *EndBranchInstr
-				continue
-			}
 			iter.descendInToBranches(i.branches...)
 			return instr
 		default:
@@ -226,45 +221,42 @@ func (p *PCRProtectionProfile) String() string {
 
 	contexts := []*pcrProtectionProfileStringifyBranchContext{{index: 0, total: 1}}
 	branchStart := false
+	depth := func() int { return len(contexts) - 1 }
 
 	iter := p.traverseInstructions()
 	for len(contexts) > 0 {
 		fmt.Fprintf(&b, "\n")
-		depth := len(contexts) - 1
 		if branchStart {
 			branchStart = false
-			fmt.Fprintf(&b, "%*sBranch %d {\n", depth*3, "", contexts[0].index)
+			fmt.Fprintf(&b, "%*sBranch %d {\n", depth()*3, "", contexts[0].index)
 		}
 
 		switch i := iter.next().(type) {
 		case *pcrProtectionProfileAddPCRValueInstr:
-			fmt.Fprintf(&b, "%*s AddPCRValue(%v, %d, %x)", depth*3, "", i.alg, i.pcr, i.value)
+			fmt.Fprintf(&b, "%*s AddPCRValue(%v, %d, %x)", depth()*3, "", i.alg, i.pcr, i.value)
 		case *pcrProtectionProfileAddPCRValueFromTPMInstr:
-			fmt.Fprintf(&b, "%*s AddPCRValueFromTPM(%v, %d)", depth*3, "", i.alg, i.pcr)
+			fmt.Fprintf(&b, "%*s AddPCRValueFromTPM(%v, %d)", depth()*3, "", i.alg, i.pcr)
 		case *pcrProtectionProfileExtendPCRInstr:
-			fmt.Fprintf(&b, "%*s ExtendPCR(%v, %d, %x)", depth*3, "", i.alg, i.pcr, i.value)
+			fmt.Fprintf(&b, "%*s ExtendPCR(%v, %d, %x)", depth()*3, "", i.alg, i.pcr, i.value)
 		case *pcrProtectionProfileBranchPointInstr:
+			fmt.Fprintf(&b, "%*s BranchPoint(", depth()*3, "")
 			contexts = append([]*pcrProtectionProfileStringifyBranchContext{{index: 0, total: len(i.branches)}}, contexts...)
-			fmt.Fprintf(&b, "%*s BranchPoint(", depth*3, "")
 			branchStart = true
 		case *pcrProtectionProfileEndBranchInstr:
 			contexts[0].index++
-			if len(contexts) > 1 {
-				// This is the end of a sub-branch rather than the root profile.
-				fmt.Fprintf(&b, "%*s}", depth*3, "")
+			if depth() > 0 {
+				// This is the end of a sub-branch rather than the root branch.
+				fmt.Fprintf(&b, "%*s}", depth()*3, "")
 			}
-			switch {
-			case contexts[0].index < contexts[0].total:
-				// There are sibling branches to print.
-				branchStart = true
-			case len(contexts) > 1:
-				// This is the end of a branch point. Printing will continue with the parent branch.
-				fmt.Fprintf(&b, "\n%*s )", (depth-1)*3, "")
-				fallthrough
-			default:
-				// Return to the parent branch's context.
-				contexts = contexts[1:]
+			branchStart = true
+		}
+		if contexts[0].index == contexts[0].total {
+			// We're at the end of a branch point. Printing should continue with the parent branch if there is one.
+			contexts = contexts[1:]
+			if depth() >= 0 {
+				fmt.Fprintf(&b, "\n%*s )", depth()*3, "")
 			}
+			branchStart = false
 		}
 	}
 
@@ -323,7 +315,9 @@ func (p *PCRProtectionProfile) canonicalize() *PCRProtectionProfile {
 		instr := iter.next()
 		switch i := instr.(type) {
 		case *pcrProtectionProfileBranchPointInstr:
-			contexts = contexts.handleBranchPoint(len(i.branches))
+			if len(i.branches) > 0 {
+				contexts = contexts.handleBranchPoint(len(i.branches))
+			}
 		case *pcrProtectionProfileEndBranchInstr:
 			if contexts.top().isRoot() {
 				var branches []*PCRProtectionProfile
