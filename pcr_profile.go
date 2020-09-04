@@ -29,46 +29,6 @@ import (
 	"golang.org/x/xerrors"
 )
 
-// pcrValuesList is a list of PCR value combinations computed from PCRProtectionProfile.
-type pcrValuesList []tpm2.PCRValues
-
-// setValue sets the specified PCR to the supplied value for all branches.
-func (l pcrValuesList) setValue(alg tpm2.HashAlgorithmId, pcr int, value tpm2.Digest) {
-	for _, v := range l {
-		v.SetValue(alg, pcr, value)
-	}
-}
-
-// extendValue extends the specified PCR with the supplied value for all branches.
-func (l pcrValuesList) extendValue(alg tpm2.HashAlgorithmId, pcr int, value tpm2.Digest) {
-	for _, v := range l {
-		if _, ok := v[alg]; !ok {
-			v[alg] = make(map[int]tpm2.Digest)
-		}
-		if _, ok := v[alg][pcr]; !ok {
-			v[alg][pcr] = make(tpm2.Digest, alg.Size())
-		}
-		h := alg.NewHash()
-		h.Write(v[alg][pcr])
-		h.Write(value)
-		v[alg][pcr] = h.Sum(nil)
-	}
-}
-
-func (l pcrValuesList) copy() (out pcrValuesList) {
-	for _, v := range l {
-		ov := make(tpm2.PCRValues)
-		for alg := range v {
-			ov[alg] = make(map[int]tpm2.Digest)
-			for pcr := range v[alg] {
-				ov[alg][pcr] = v[alg][pcr]
-			}
-		}
-		out = append(out, ov)
-	}
-	return
-}
-
 // pcrProtectionProfileInstr is a building block of PCRProtectionProfile.
 type pcrProtectionProfileInstr interface{}
 
@@ -254,6 +214,8 @@ func (p *PCRProtectionProfile) traverseInstructions() *pcrProtectionProfileItera
 	return i
 }
 
+// pcrProtectionProfileStringifyBranchContext is used for maintaining context about branch points during
+// PCRProtectionProfile.String()
 type pcrProtectionProfileStringifyBranchContext struct {
 	index int
 	total int
@@ -309,93 +271,118 @@ func (p *PCRProtectionProfile) String() string {
 	return b.String()
 }
 
-// pcrProtectionProfileComputeContext records state used when computing PCR values for a PCRProtectionProfile
-type pcrProtectionProfileComputeContext struct {
-	parent *pcrProtectionProfileComputeContext
-	values pcrValuesList
+// pcrProtectionProfileCanonicalizeContext is used for maintaining context during PCRProtectionProfile.canonicalize(). It is
+// associated with a single branch and consists of all of the alternative instruction sequences until the current point of execution,
+// and contains a reference to its parent context.
+type pcrProtectionProfileCanonicalizeContext struct {
+	parent *pcrProtectionProfileCanonicalizeContext
+	instrs []pcrProtectionProfileInstrList
 }
 
-// handleBranches is called when encountering a branch in a profile, and returns a slice of new *pcrProtectionProfileComputeContext
-// instances (one for each sub-branch). At the end of each sub-branch, finishBranch must be called on the associated
-// *pcrProtectionProfileComputeContext.
-func (c *pcrProtectionProfileComputeContext) handleBranches(n int) (out []*pcrProtectionProfileComputeContext) {
-	out = make([]*pcrProtectionProfileComputeContext, 0, n)
-	for i := 0; i < n; i++ {
-		out = append(out, &pcrProtectionProfileComputeContext{parent: c, values: c.values.copy()})
-	}
-	c.values = nil
-	return
-}
-
-// finishBranch is called when encountering the end of a branch. This propagates the computed PCR values to the
-// *pcrProtectionProfileComputeContext associated with the parent branch. Calling this will panic on a
-// *pcrProtectionProfileComputeContext associated with the root branch.
-func (c *pcrProtectionProfileComputeContext) finishBranch() {
-	c.parent.values = append(c.parent.values, c.values...)
-}
-
-// isRoot returns true if this *pcrProtectionProfileComputeContext is associated with a root branch.
-func (c *pcrProtectionProfileComputeContext) isRoot() bool {
+func (c *pcrProtectionProfileCanonicalizeContext) isRoot() bool {
 	return c.parent == nil
 }
 
-// pcrProtectionProfileComputeContextStack is a stack of *pcrProtectionProfileComputeContext, with the top of the stack associated
-// with the profile branch from which instructions are currently being processed.
-type pcrProtectionProfileComputeContextStack []*pcrProtectionProfileComputeContext
+// pcrProtectionProfileCanonicalizeContextStack is a slice of contexts used to maintain context across branch points during
+// PCRProtectionProfile.canonicalize().
+type pcrProtectionProfileCanonicalizeContextStack []*pcrProtectionProfileCanonicalizeContext
 
-// handleBranches is called when encountering a branch in a profile, and returns a new pcrProtectionProfileComputeContextStack with
-// the top of the stack associated with the first sub-branch, from which subsequent instructions will be processed from. At the
-// end of each sub-branch, finishBranch must be called.
-func (s pcrProtectionProfileComputeContextStack) handleBranches(n int) pcrProtectionProfileComputeContextStack {
-	newContexts := s.top().handleBranches(n)
-	return pcrProtectionProfileComputeContextStack(append(newContexts, s...))
+func (s pcrProtectionProfileCanonicalizeContextStack) handleBranchPoint(n int) (out pcrProtectionProfileCanonicalizeContextStack) {
+	for i := 0; i < n; i++ {
+		c := &pcrProtectionProfileCanonicalizeContext{parent: s.top()}
+		for _, l := range s.top().instrs {
+			l2 := make(pcrProtectionProfileInstrList, len(l))
+			copy(l2, l)
+			c.instrs = append(c.instrs, l2)
+		}
+		out = append(out, c)
+	}
+	s.top().instrs = nil
+	out = append(out, s...)
+	return
 }
 
-// finishBranch is called when encountering the end of a branch. This propagates the computed PCR values from the
-// *pcrProtectionProfileComputeContext at the top of the stack to the *pcrProtectionProfileComputeContext associated with the parent
-// branch, and then pops the context from the top of the stack. The new top of the stack corresponds to either a sibling branch or
-// the parent branch, from which subsequent instructions will be processed from.
-func (s pcrProtectionProfileComputeContextStack) finishBranch() pcrProtectionProfileComputeContextStack {
-	s.top().finishBranch()
+func (s pcrProtectionProfileCanonicalizeContextStack) handleEndBranch() pcrProtectionProfileCanonicalizeContextStack {
+	for _, l := range s.top().instrs {
+		s.top().parent.instrs = append(s.top().parent.instrs, l)
+	}
 	return s[1:]
 }
 
-// top returns the *pcrProtectionProfileComputeContext at the top of the stack, which is associated with the branch that instructions
-// are currently being processed from.
-func (s pcrProtectionProfileComputeContextStack) top() *pcrProtectionProfileComputeContext {
+func (s pcrProtectionProfileCanonicalizeContextStack) top() *pcrProtectionProfileCanonicalizeContext {
 	return s[0]
 }
 
-// computePCRValues computes a list of different PCR value combinations from this PCRProtectionProfile.
-func (p *PCRProtectionProfile) computePCRValues(tpm *tpm2.TPMContext) (pcrValuesList, error) {
-	contexts := pcrProtectionProfileComputeContextStack{{values: pcrValuesList{make(tpm2.PCRValues)}}}
+// canonicalize converts an arbitrarily complex profile in to a profile starting with a single branch point and then
+// branches of instructions with no other branch points.
+func (p *PCRProtectionProfile) canonicalize() *PCRProtectionProfile {
+	contexts := pcrProtectionProfileCanonicalizeContextStack{{instrs: make([]pcrProtectionProfileInstrList, 1)}}
 
 	iter := p.traverseInstructions()
 	for {
+		instr := iter.next()
+		switch i := instr.(type) {
+		case *pcrProtectionProfileBranchPointInstr:
+			contexts = contexts.handleBranchPoint(len(i.branches))
+		case *pcrProtectionProfileEndBranchInstr:
+			if contexts.top().isRoot() {
+				var branches []*PCRProtectionProfile
+				for _, l := range contexts.top().instrs {
+					branches = append(branches, &PCRProtectionProfile{instrs: l})
+				}
+				return &PCRProtectionProfile{instrs: pcrProtectionProfileInstrList{&pcrProtectionProfileBranchPointInstr{branches: branches}}}
+			}
+			contexts = contexts.handleEndBranch()
+		default:
+			for i := range contexts.top().instrs {
+				contexts.top().instrs[i] = append(contexts.top().instrs[i], instr)
+			}
+		}
+	}
+}
+
+// computePCRValues computes a list of different PCR value combinations from this PCRProtectionProfile.
+func (p *PCRProtectionProfile) computePCRValues(tpm *tpm2.TPMContext) ([]tpm2.PCRValues, error) {
+	var values []tpm2.PCRValues
+	var total int
+	v := make(tpm2.PCRValues)
+
+	iter := p.canonicalize().traverseInstructions()
+	for {
 		switch i := iter.next().(type) {
 		case *pcrProtectionProfileAddPCRValueInstr:
-			contexts.top().values.setValue(i.alg, i.pcr, i.value)
+			v.SetValue(i.alg, i.pcr, i.value)
 		case *pcrProtectionProfileAddPCRValueFromTPMInstr:
 			if tpm == nil {
 				return nil, fmt.Errorf("cannot read current value of PCR %d from bank %v: no TPM context", i.pcr, i.alg)
 			}
-			_, v, err := tpm.PCRRead(tpm2.PCRSelectionList{{Hash: i.alg, Select: []int{i.pcr}}})
+			_, tv, err := tpm.PCRRead(tpm2.PCRSelectionList{{Hash: i.alg, Select: []int{i.pcr}}})
 			if err != nil {
 				return nil, xerrors.Errorf("cannot read current value of PCR %d from bank %v: %w", i.pcr, i.alg, err)
 			}
-			contexts.top().values.setValue(i.alg, i.pcr, v[i.alg][i.pcr])
+			v.SetValue(i.alg, i.pcr, tv[i.alg][i.pcr])
 		case *pcrProtectionProfileExtendPCRInstr:
-			contexts.top().values.extendValue(i.alg, i.pcr, i.value)
-		case *pcrProtectionProfileBranchPointInstr:
-			// As this is a depth-first traversal, processing of this branch is parked when a BranchPoint instruction is encountered.
-			// Subsequent instructions will be from each of the branches from this branch point in turn.
-			contexts = contexts.handleBranches(len(i.branches))
-		case *pcrProtectionProfileEndBranchInstr:
-			if contexts.top().isRoot() {
-				// This is the end of the profile
-				return contexts.top().values, nil
+			if _, ok := v[i.alg]; !ok {
+				v[i.alg] = make(map[int]tpm2.Digest)
 			}
-			contexts = contexts.finishBranch()
+			if _, ok := v[i.alg][i.pcr]; !ok {
+				v[i.alg][i.pcr] = make(tpm2.Digest, i.alg.Size())
+			}
+			h := i.alg.NewHash()
+			h.Write(v[i.alg][i.pcr])
+			h.Write(i.value)
+			v[i.alg][i.pcr] = h.Sum(nil)
+		case *pcrProtectionProfileBranchPointInstr:
+			if total > 0 {
+				panic("unexpected branch point in canonicalized profile")
+			}
+			total = len(i.branches)
+		case *pcrProtectionProfileEndBranchInstr:
+			values = append(values, v)
+			if len(values) == total {
+				return values, nil
+			}
+			v = make(tpm2.PCRValues)
 		}
 	}
 }
