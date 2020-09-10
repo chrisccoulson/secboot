@@ -142,6 +142,30 @@ func (p *PCRProtectionProfile) AbortBranch() *PCRProtectionProfileBranchPoint {
 	return parent
 }
 
+// Test determines if this PCR profile is satisfied by the TPM's current PCR values. This is useful for determining
+// whether the digests in this profile have been computed correctly in order to detect subtle platform bugs that might
+// cause invalid policies to be created.
+func (p *PCRProtectionProfile) Test(tpm *TPMConnection) (bool, error) {
+	pcrs, pcrDigests, err := p.computePCRDigests(tpm, tpm2.HashAlgorithmSHA256)
+	if err != nil {
+		return false, xerrors.Errorf("cannot compute PCR digests from profile: %w", err)
+	}
+
+	_, values, err := tpm.PCRRead(pcrs, tpm.HmacSession())
+	if err != nil {
+		return false, xerrors.Errorf("cannot read current PCR values from TPM: %w", err)
+	}
+
+	_, digest, _ := tpm2.ComputePCRDigestSimple(tpm2.HashAlgorithmSHA256, values)
+	for _, d := range pcrDigests {
+		if bytes.Equal(d, digest) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 // NewBranch creates a PCRProtectionProfile corresponding to a new branch, inserts it in to this branch point and returns it.
 // Note that each branch created from this branch point must explicitly define values for the same set of PCRs. It is not possible
 // to generate policies where each branch defines values for a different set of PCRs.
