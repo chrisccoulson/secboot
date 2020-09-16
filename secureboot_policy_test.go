@@ -40,54 +40,6 @@ import (
 	"github.com/snapcore/secboot/internal/testutil"
 )
 
-func TestDecodeWinCertificate(t *testing.T) {
-	for _, data := range []struct {
-		desc            string
-		path            string
-		offset          int64
-		expectedType    uint16
-		efiGuidCertType efi.GUID
-	}{
-		{
-			desc:            "AuthenticatedVariable",
-			path:            "testdata/updates1/dbx/MS-2016-08-08.bin",
-			offset:          16,
-			expectedType:    WinCertTypeEfiGuid,
-			efiGuidCertType: EFICertTypePkcs7Guid,
-		},
-		// TODO: Add test with signed EFI executable
-	} {
-		t.Run(data.desc, func(t *testing.T) {
-			f, err := os.Open(data.path)
-			if err != nil {
-				t.Fatalf("Open failed: %v", err)
-			}
-			defer f.Close()
-
-			f.Seek(data.offset, io.SeekStart)
-
-			cert, _, err := DecodeWinCertificate(f)
-			if err != nil {
-				t.Fatalf("DecodeWinCertificate failed: %v", err)
-			}
-
-			certType := GetWinCertificateType(cert)
-			if certType != data.expectedType {
-				t.Errorf("Unexpected type: %v", certType)
-			}
-
-			switch certType {
-			case WinCertTypePKCSSignedData:
-			case WinCertTypeEfiGuid:
-				c := cert.(*WinCertificateUefiGuid)
-				if c.CertType != data.efiGuidCertType {
-					t.Errorf("Unexpected WIN_CERTIFICATE_UEFI_GUID type: %v", c.CertType)
-				}
-			}
-		})
-	}
-}
-
 func TestReadShimVendorCert(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.SkipNow()

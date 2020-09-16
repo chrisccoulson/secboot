@@ -59,9 +59,6 @@ const (
 	returningFromEfiApplicationEvent = "Returning from EFI Application from Boot Option" // EV_EFI_ACTION index 2: "Attempt to execute code from Boot Option was unsuccessful"
 
 	sbKeySyncExe = "sbkeysync"
-
-	winCertTypePKCSSignedData uint16 = 0x0002 // WIN_CERT_TYPE_PKCS_SIGNED_DATA
-	winCertTypeEfiGuid        uint16 = 0x0EF1 // WIN_CERT_TYPE_EFI_GUID
 )
 
 var (
@@ -69,71 +66,10 @@ var (
 	efiGlobalVariableGuid        = efi.MakeGUID(0x8be4df61, 0x93ca, 0x11d2, 0xaa0d, [...]uint8{0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c}) // EFI_GLOBAL_VARIABLE
 	efiImageSecurityDatabaseGuid = efi.MakeGUID(0xd719b2cb, 0x3d3a, 0x4596, 0xa3bc, [...]uint8{0xda, 0xd0, 0x0e, 0x67, 0x65, 0x6f}) // EFI_IMAGE_SECURITY_DATABASE_GUID
 
-	efiCertX509Guid      = efi.MakeGUID(0xa5c059a1, 0x94e4, 0x4aa7, 0x87b5, [...]uint8{0xab, 0x15, 0x5c, 0x2b, 0xf0, 0x72}) // EFI_CERT_X509_GUID
-	efiCertTypePkcs7Guid = efi.MakeGUID(0x4aafd29d, 0x68df, 0x49ee, 0x8aa9, [...]uint8{0x34, 0x7d, 0x37, 0x56, 0x65, 0xa7}) // EFI_CERT_TYPE_PKCS7_GUID
+	efiCertX509Guid = efi.MakeGUID(0xa5c059a1, 0x94e4, 0x4aa7, 0x87b5, [...]uint8{0xab, 0x15, 0x5c, 0x2b, 0xf0, 0x72}) // EFI_CERT_X509_GUID
 
 	oidSha256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
 )
-
-type winCertificate interface {
-	wCertificateType() uint16
-}
-
-// winCertificateUefiGuid corresponds to the WIN_CERTIFICATE_UEFI_GUID type.
-type winCertificateUefiGuid struct {
-	CertType efi.GUID // CertType
-	Data     []byte   // CertData
-}
-
-func (c *winCertificateUefiGuid) wCertificateType() uint16 {
-	return winCertTypeEfiGuid
-}
-
-type winCertificateAuthenticode struct {
-	Data []byte
-}
-
-func (c *winCertificateAuthenticode) wCertificateType() uint16 {
-	return winCertTypePKCSSignedData
-}
-
-// decodeWinCertificate decodes the WIN_CERTIFICATE implementation from r. Currently supported types are WIN_CERT_TYPE_PKCS_SIGNED_DATA
-// and WIN_CERT_TYPE_EFI_GUID.
-func decodeWinCertificate(r io.Reader) (cert winCertificate, length int, err error) {
-	var hdr struct {
-		Length          uint32
-		Revision        uint16
-		CertificateType uint16
-	}
-	if err := binary.Read(r, binary.LittleEndian, &hdr); err != nil {
-		return nil, 0, xerrors.Errorf("cannot read WIN_CERTIFICATE header fields: %w", err)
-	}
-	if hdr.Revision != 0x200 {
-		return nil, 0, fmt.Errorf("invalid wRevision value (0x%04x)", hdr.Revision)
-	}
-
-	switch hdr.CertificateType {
-	case winCertTypePKCSSignedData:
-		out := &winCertificateAuthenticode{}
-		out.Data = make([]byte, int(hdr.Length)-binary.Size(hdr))
-		if _, err := io.ReadFull(r, out.Data); err != nil {
-			return nil, 0, xerrors.Errorf("cannot read WIN_CERTIFICATE.bCertificate: %w", err)
-		}
-		return out, int(hdr.Length), nil
-	case winCertTypeEfiGuid:
-		out := &winCertificateUefiGuid{}
-		if _, err := io.ReadFull(r, out.CertType[:]); err != nil {
-			return nil, 0, xerrors.Errorf("cannot read WIN_CERTIFICATE_UEFI_GUID.CertType: %w", err)
-		}
-		out.Data = make([]byte, int(hdr.Length)-binary.Size(hdr)-binary.Size(out.CertType))
-		if _, err := io.ReadFull(r, out.Data); err != nil {
-			return nil, 0, xerrors.Errorf("cannot read WIN_CERTIFICATE_UEFI_GUID.CertData: %w", err)
-		}
-		return out, int(hdr.Length), nil
-	default:
-		return nil, 0, fmt.Errorf("cannot decode unrecognized type (0x%04x)", hdr.CertificateType)
-	}
-}
 
 // readShimVendorCert obtains the DER encoded built-in vendor certificate from the shim executable accessed via r.
 func readShimVendorCert(r io.ReaderAt) ([]byte, error) {
@@ -317,20 +253,9 @@ const (
 // computeDbUpdate appends the EFI signature database update supplied via update to the signature database supplied via orig, filtering
 // out EFI_SIGNATURE_DATA entries that are already in orig and then returning the result.
 func computeDbUpdate(orig io.ReaderAt, update io.ReadSeeker, quirkMode sigDbUpdateQuirkMode) ([]byte, error) {
-	// Skip over EFI_VARIABLE_AUTHENTICATION_2.TimeStamp
-	update.Seek(16, io.SeekCurrent)
-
-	var cert *winCertificateUefiGuid
-	if c, _, err := decodeWinCertificate(update); err != nil {
-		return nil, xerrors.Errorf("cannot decode EFI_VARIABLE_AUTHENTICATION_2.AuthInfo field from update: %w", err)
-	} else if c.wCertificateType() != winCertTypeEfiGuid {
-		return nil, fmt.Errorf("update has invalid EFI_VARIABLE_AUTHENTICATION_2.AuthInfo.Hdr.wCertificateType (0x%04x)", c.wCertificateType())
-	} else {
-		cert = c.(*winCertificateUefiGuid)
-	}
-
-	if cert.CertType != efiCertTypePkcs7Guid {
-		return nil, fmt.Errorf("update has invalid value for EFI_VARIABLE_AUTHENTICATION_2.AuthInfo.CertType (%s)", cert.CertType)
+	_, err := efi.DecodeTimeBasedVariableAuthentication(update)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot decode EFI_VARIABLE_AUTHENTICATION_2 header from update: %w", err)
 	}
 
 	filteredUpdate := new(bytes.Buffer)
@@ -1016,30 +941,27 @@ func (g *secureBootPolicyGen) computeAndExtendVerificationMeasurement(branches [
 	// ("Secure Boot and Driver Signing - UEFI Image Validation - Signature Database Update - Authorization Process") of the UEFI
 	// Specification, version 2.8.
 	var sigs []*authenticodeSignerAndIntermediates
-	read := 0
 	for {
 		// Signatures in this section are 8-byte aligned - see the PE spec:
 		// https://docs.microsoft.com/en-us/windows/win32/debug/pe-format#the-attribute-certificate-table-image-only
+		read, _ := certReader.Seek(0, io.SeekCurrent)
 		alignSize := (8 - (read & 7)) % 8
-		read += alignSize
 		certReader.Seek(int64(alignSize), io.SeekCurrent)
 
-		if int64(read) >= certReader.Size() {
+		c, err := efi.DecodeWinCertificate(certReader)
+		if xerrors.Is(err, io.EOF) {
 			break
 		}
-
-		c, n, err := decodeWinCertificate(certReader)
-		switch {
-		case err != nil:
+		if err != nil {
 			return xerrors.Errorf("cannot decode WIN_CERTIFICATE from security directory entry of PE binary: %w", err)
-		case c.wCertificateType() != winCertTypePKCSSignedData:
-			return fmt.Errorf("unexpected value for WIN_CERTIFICATE.wCertificateType (0x%04x): not an Authenticode signature", c.wCertificateType())
+		}
+		cert, ok := c.(efi.WinCertificateAuthenticode)
+		if !ok {
+			return errors.New("WIN_CERTIFICATE from security directory entry of PE binary is not an Authenticode signature")
 		}
 
-		read += n
-
 		// Decode the signature
-		p7, err := pkcs7.Parse(c.(*winCertificateAuthenticode).Data)
+		p7, err := pkcs7.Parse(cert)
 		if err != nil {
 			return xerrors.Errorf("cannot decode signature: %w", err)
 		}

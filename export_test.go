@@ -54,8 +54,6 @@ var (
 	CreatePinNVIndex                         = createPinNVIndex
 	CreatePublicAreaForRSASigningKey         = createPublicAreaForRSASigningKey
 	DecodeSecureBootDb                       = decodeSecureBootDb
-	DecodeWinCertificate                     = decodeWinCertificate
-	EFICertTypePkcs7Guid                     = efiCertTypePkcs7Guid
 	EFICertX509Guid                          = efiCertX509Guid
 	EnsureLockNVIndex                        = ensureLockNVIndex
 	ExecutePolicySession                     = executePolicySession
@@ -68,8 +66,6 @@ var (
 	ReadAndValidateLockNVIndexPublic         = readAndValidateLockNVIndexPublic
 	ReadDynamicPolicyCounter                 = readDynamicPolicyCounter
 	ReadShimVendorCert                       = readShimVendorCert
-	WinCertTypePKCSSignedData                = winCertTypePKCSSignedData
-	WinCertTypeEfiGuid                       = winCertTypeEfiGuid
 )
 
 // Alias some unexported types for testing. These are required in order to pass these between functions in tests, or to access
@@ -99,14 +95,6 @@ func (e *SecureBootVerificationEvent) MeasuredInPreOS() bool {
 type SigDbUpdateQuirkMode = sigDbUpdateQuirkMode
 
 type StaticPolicyData staticPolicyData
-
-type WinCertificateAuthenticode = winCertificateAuthenticode
-type WinCertificateUefiGuid = winCertificateUefiGuid
-
-// Export some helpers for testing.
-func GetWinCertificateType(cert winCertificate) uint16 {
-	return cert.wCertificateType()
-}
 
 func MockEFIReadVar(path string) (restore func()) {
 	orig := efiReadVar
