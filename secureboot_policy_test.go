@@ -1402,6 +1402,8 @@ func TestAddEFISecureBootPolicyProfile(t *testing.T) {
 			defer restoreEventLogPath()
 			restoreEfivarsPath := testutil.MockEFIVarsPath(data.efivars)
 			defer restoreEfivarsPath()
+			restoreEfiReadVar := MockEFIReadVar(data.efivars)
+			defer restoreEfiReadVar()
 
 			policy := data.initial
 			if policy == nil {

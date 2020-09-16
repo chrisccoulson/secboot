@@ -56,14 +56,6 @@ const (
 	mokSbStateName = "MokSBState" // Unicode variable name for the shim secure boot configuration (validation enabled/disabled)
 	shimName       = "Shim"       // Unicode variable name used for recording events when shim's vendor certificate is used for verification
 
-	kekFilename     = "KEK-8be4df61-93ca-11d2-aa0d-00e098032b8c"       // Filename in efivarfs for accessing the KEK database
-	dbFilename      = "db-d719b2cb-3d3a-4596-a3bc-dad00e67656f"        // Filename in efivarfs for accessing the EFI authorized signature database
-	dbxFilename     = "dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f"       // Filename in efivarfs for accessing the EFI forbidden signature database
-	mokListFilename = "MokListRT-605dab50-e046-4300-abb6-3dd810dd8b23" // Filename in efivarfs for accessing a runtime copy of the shim MOK database
-
-	uefiDriverPCR = 2 // UEFI Drivers and UEFI Applications PCR
-	secureBootPCR = 7 // Secure Boot Policy Measurements PCR
-
 	returningFromEfiApplicationEvent = "Returning from EFI Application from Boot Option" // EV_EFI_ACTION index 2: "Attempt to execute code from Boot Option was unsuccessful"
 
 	sbKeySyncExe = "sbkeysync"
@@ -731,17 +723,10 @@ func (b *secureBootPolicyGenBranch) computeAndExtendVariableMeasurement(varName 
 
 // processSignatureDbMeasurementEvent computes a EFI signature database measurement for the specified database and with the supplied
 // updates, and then extends that in to this branch.
-func (b *secureBootPolicyGenBranch) processSignatureDbMeasurementEvent(guid efi.GUID, name, filename string, updates []*secureBootDbUpdate, updateQuirkMode sigDbUpdateQuirkMode) ([]byte, error) {
-	db, err := ioutil.ReadFile(filepath.Join(efi_internal.EFIVarsPath, filename))
-	if err != nil && !os.IsNotExist(err) {
+func (b *secureBootPolicyGenBranch) processSignatureDbMeasurementEvent(guid efi.GUID, name string, updates []*secureBootDbUpdate, updateQuirkMode sigDbUpdateQuirkMode) ([]byte, error) {
+	db, _, err := efiReadVar(name, guid)
+	if err != nil && err != efi.ErrVariableNotFound {
 		return nil, xerrors.Errorf("cannot read current variable: %w", err)
-	}
-	if len(db) > 0 {
-		if len(db) < 4 {
-			return nil, errors.New("current variable data is too short")
-		}
-		// Skip over the 4-byte attribute field
-		db = db[4:]
 	}
 
 	for _, u := range updates {
@@ -767,7 +752,7 @@ func (b *secureBootPolicyGenBranch) processSignatureDbMeasurementEvent(guid efi.
 // processKEKMeasurementEvent computes a measurement of KEK with the supplied udates applied and then extends that in to
 // this branch.
 func (b *secureBootPolicyGenBranch) processKEKMeasurementEvent(updates []*secureBootDbUpdate, updateQuirkMode sigDbUpdateQuirkMode) error {
-	if _, err := b.processSignatureDbMeasurementEvent(efiGlobalVariableGuid, kekName, kekFilename, updates, updateQuirkMode); err != nil {
+	if _, err := b.processSignatureDbMeasurementEvent(efiGlobalVariableGuid, kekName, updates, updateQuirkMode); err != nil {
 		return err
 	}
 	return nil
@@ -778,7 +763,7 @@ func (b *secureBootPolicyGenBranch) processKEKMeasurementEvent(updates []*secure
 // resulting authorized signature database contents, which is used later on when computing verification events in
 // secureBootPolicyGen.computeAndExtendVerificationMeasurement.
 func (b *secureBootPolicyGenBranch) processDbMeasurementEvent(updates []*secureBootDbUpdate, updateQuirkMode sigDbUpdateQuirkMode) error {
-	db, err := b.processSignatureDbMeasurementEvent(efiImageSecurityDatabaseGuid, dbName, dbFilename, updates, updateQuirkMode)
+	db, err := b.processSignatureDbMeasurementEvent(efiImageSecurityDatabaseGuid, dbName, updates, updateQuirkMode)
 	if err != nil {
 		return err
 	}
@@ -796,7 +781,7 @@ func (b *secureBootPolicyGenBranch) processDbMeasurementEvent(updates []*secureB
 // processDbxMeasurementEvent computes a measurement of the EFI forbidden signature database with the supplied updates applied and
 // then extends that in to this branch.
 func (b *secureBootPolicyGenBranch) processDbxMeasurementEvent(updates []*secureBootDbUpdate, updateQuirkMode sigDbUpdateQuirkMode) error {
-	if _, err := b.processSignatureDbMeasurementEvent(efiImageSecurityDatabaseGuid, dbxName, dbxFilename, updates, updateQuirkMode); err != nil {
+	if _, err := b.processSignatureDbMeasurementEvent(efiImageSecurityDatabaseGuid, dbxName, updates, updateQuirkMode); err != nil {
 		return err
 	}
 	return nil

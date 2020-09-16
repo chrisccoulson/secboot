@@ -22,9 +22,13 @@ package secboot
 import (
 	"bytes"
 	"crypto/rsa"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"github.com/canonical/go-tpm2"
 	"github.com/chrisccoulson/go-efilib"
@@ -102,6 +106,29 @@ type WinCertificateUefiGuid = winCertificateUefiGuid
 // Export some helpers for testing.
 func GetWinCertificateType(cert winCertificate) uint16 {
 	return cert.wCertificateType()
+}
+
+func MockEFIReadVar(path string) (restore func()) {
+	orig := efiReadVar
+
+	efiReadVar = func(name string, guid efi.GUID) ([]byte, efi.VariableAttributes, error) {
+		v, err := ioutil.ReadFile(filepath.Join(path, fmt.Sprintf("%s-%s", name, guid)))
+		switch {
+		case os.IsNotExist(err):
+			return nil, 0, efi.ErrVariableNotFound
+		case err != nil:
+			return nil, 0, err
+		case len(v) < 4:
+			return nil, 0, errors.New("invalid variable format: too short")
+		default:
+			attrs := efi.VariableAttributes(binary.LittleEndian.Uint32(v))
+			return v[4:], attrs, nil
+		}
+	}
+
+	return func() {
+		efiReadVar = orig
+	}
 }
 
 type MockPolicyPCRParam struct {

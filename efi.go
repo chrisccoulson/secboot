@@ -24,13 +24,19 @@ import (
 	"github.com/snapcore/snapd/snap"
 	"io"
 	"os"
+
+	"github.com/chrisccoulson/go-efilib"
 )
 
 const (
+	uefiDriverPCR      = 2 // UEFI Drivers and UEFI Applications PCR
 	bootManagerCodePCR = 4 // Boot Manager Code and Boot Attempts PCR
+	secureBootPCR      = 7 // Secure Boot Policy Measurements PCR
 
 	certTableIndex = 4 // Index of the Certificate Table entry in the Data Directory of a PE image optional header
 )
+
+var efiReadVar = efi.ReadVar
 
 // EFIImage corresponds to a binary that is loaded, verified and executed before ExitBootServices.
 type EFIImage interface {
