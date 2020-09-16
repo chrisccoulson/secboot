@@ -35,6 +35,7 @@ import (
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/tcglog-parser"
+	"github.com/chrisccoulson/go-efilib"
 	. "github.com/snapcore/secboot"
 	"github.com/snapcore/secboot/internal/testutil"
 )
@@ -45,7 +46,7 @@ func TestDecodeWinCertificate(t *testing.T) {
 		path            string
 		offset          int64
 		expectedType    uint16
-		efiGuidCertType tcglog.EFIGUID
+		efiGuidCertType efi.GUID
 	}{
 		{
 			desc:            "AuthenticatedVariable",
@@ -148,7 +149,7 @@ func TestReadShimVendorCert(t *testing.T) {
 
 func TestDecodeSecureBootDb(t *testing.T) {
 	var (
-		microsoftOwnerGuid = tcglog.MakeEFIGUID(0x77fa9abd, 0x0359, 0x4d32, 0xbd60, [...]uint8{0x28, 0xf4, 0xe7, 0x8f, 0x78, 0x4b})
+		microsoftOwnerGuid = efi.MakeGUID(0x77fa9abd, 0x0359, 0x4d32, 0xbd60, [...]uint8{0x28, 0xf4, 0xe7, 0x8f, 0x78, 0x4b})
 
 		microsoftRootCAName = "CN=Microsoft Root Certificate Authority 2010,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US"
 		microsoftPCASubject = "CN=Microsoft Windows Production PCA 2011,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US"
@@ -158,14 +159,14 @@ func TestDecodeSecureBootDb(t *testing.T) {
 		microsoftCASubject            = "CN=Microsoft Corporation UEFI CA 2011,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US"
 		microsoftCASerial             = decodeHexStringT(t, "6108d3c4000000000004")
 
-		testOwnerGuid = tcglog.MakeEFIGUID(0xd1b37b32, 0x172d, 0x4d2a, 0x909f, [...]uint8{0xc7, 0x80, 0x81, 0x50, 0x17, 0x86})
+		testOwnerGuid = efi.MakeGUID(0xd1b37b32, 0x172d, 0x4d2a, 0x909f, [...]uint8{0xc7, 0x80, 0x81, 0x50, 0x17, 0x86})
 	)
 
 	type certId struct {
 		issuer  string
 		subject string
 		serial  []byte
-		owner   tcglog.EFIGUID
+		owner   efi.GUID
 	}
 	for _, data := range []struct {
 		desc       string
@@ -256,7 +257,7 @@ func TestDecodeSecureBootDb(t *testing.T) {
 					issuer:  microsoftRootCAName,
 					subject: "CN=Microsoft Windows PCA 2010,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US",
 					serial:  decodeHexStringT(t, "610c6a19000000000004"),
-					owner:   tcglog.MakeEFIGUID(0x00000000, 0x0000, 0x0000, 0x0000, [...]uint8{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}),
+					owner:   efi.MakeGUID(0x00000000, 0x0000, 0x0000, 0x0000, [...]uint8{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}),
 				},
 			},
 			signatures: 78,

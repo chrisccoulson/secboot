@@ -19,12 +19,18 @@
 			"path": "github.com/canonical/go-tpm2/mu",
 			"revision": "8f372d7de1b07c887e388874555d48f9161feaed",
 			"revisionTime": "2020-08-24T11:54:14Z"
-        },
-        {
-			"checksumSHA1": "QGwWyf2f/5+FacNj2iKpjp8N5hg=",
+		},
+		{
+			"checksumSHA1": "LJYW7stalRppAGAXzAxFNNJEL5g=",
 			"path": "github.com/canonical/tcglog-parser",
-			"revision": "12a3a7bcf5a14486e838fea211e8d4aa280e9671",
-			"revisionTime": "2020-09-08T16:50:21Z"
+			"revision": "ad21a2f7a1168051ed7c27905b7b4e707fae1109",
+			"revisionTime": "2020-09-09T12:16:40Z"
+		},
+		{
+			"checksumSHA1": "PSVkMacZgWEYUruc759tKXU3exY=",
+			"path": "github.com/chrisccoulson/go-efilib",
+			"revision": "d4cbdc5d0fb3911d532a646dbc09dca90bb03f3a",
+			"revisionTime": "2020-09-15T17:38:34Z"
 		},
 		{
 			"checksumSHA1": "kmcZh6191ZYy/+G/tIWFZoVEkGs=",

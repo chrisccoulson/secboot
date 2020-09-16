@@ -27,7 +27,7 @@ import (
 	"os"
 
 	"github.com/canonical/go-tpm2"
-	"github.com/canonical/tcglog-parser"
+	"github.com/chrisccoulson/go-efilib"
 )
 
 // Export constants for testing
@@ -74,11 +74,11 @@ type DynamicPolicyData dynamicPolicyData
 
 type EFISignatureData = efiSignatureData
 
-func (s *EFISignatureData) SignatureType() tcglog.EFIGUID {
+func (s *EFISignatureData) SignatureType() efi.GUID {
 	return s.signatureType
 }
 
-func (s *EFISignatureData) Owner() tcglog.EFIGUID {
+func (s *EFISignatureData) Owner() efi.GUID {
 	return s.owner
 }
 
