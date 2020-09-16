@@ -81,8 +81,6 @@ var (
 	efiCertTypePkcs7Guid = efi.MakeGUID(0x4aafd29d, 0x68df, 0x49ee, 0x8aa9, [...]uint8{0x34, 0x7d, 0x37, 0x56, 0x65, 0xa7}) // EFI_CERT_TYPE_PKCS7_GUID
 
 	oidSha256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
-
-	efivarsPath = "/sys/firmware/efi/efivars" // Default mount point for efivarfs
 )
 
 type winCertificate interface {
