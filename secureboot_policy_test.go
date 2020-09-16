@@ -24,7 +24,6 @@ import (
 	"crypto"
 	_ "crypto/sha1"
 	_ "crypto/sha256"
-	"crypto/x509"
 	"encoding/binary"
 	"io"
 	"io/ioutil"
@@ -94,169 +93,6 @@ func TestReadShimVendorCert(t *testing.T) {
 				if err.Error() != data.err {
 					t.Errorf("Unexpected error: %v", err)
 				}
-			}
-		})
-	}
-}
-
-func TestDecodeSecureBootDb(t *testing.T) {
-	var (
-		microsoftOwnerGuid = efi.MakeGUID(0x77fa9abd, 0x0359, 0x4d32, 0xbd60, [...]uint8{0x28, 0xf4, 0xe7, 0x8f, 0x78, 0x4b})
-
-		microsoftRootCAName = "CN=Microsoft Root Certificate Authority 2010,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US"
-		microsoftPCASubject = "CN=Microsoft Windows Production PCA 2011,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US"
-		microsoftPCASerial  = decodeHexStringT(t, "61077656000000000008")
-
-		microsoftThirdPartyRootCAName = "CN=Microsoft Corporation Third Party Marketplace Root,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US"
-		microsoftCASubject            = "CN=Microsoft Corporation UEFI CA 2011,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US"
-		microsoftCASerial             = decodeHexStringT(t, "6108d3c4000000000004")
-
-		testOwnerGuid = efi.MakeGUID(0xd1b37b32, 0x172d, 0x4d2a, 0x909f, [...]uint8{0xc7, 0x80, 0x81, 0x50, 0x17, 0x86})
-	)
-
-	type certId struct {
-		issuer  string
-		subject string
-		serial  []byte
-		owner   efi.GUID
-	}
-	for _, data := range []struct {
-		desc       string
-		path       string
-		certs      []certId
-		signatures int
-	}{
-		{
-			desc: "db1",
-			path: "testdata/efivars1/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			certs: []certId{
-				{
-					issuer:  microsoftRootCAName,
-					subject: microsoftPCASubject,
-					serial:  microsoftPCASerial,
-					owner:   microsoftOwnerGuid,
-				},
-				{
-					issuer:  microsoftThirdPartyRootCAName,
-					subject: microsoftCASubject,
-					serial:  microsoftCASerial,
-					owner:   microsoftOwnerGuid,
-				},
-			},
-			signatures: 2,
-		},
-		{
-			desc: "db2",
-			path: "testdata/efivars2/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			certs: []certId{
-				{
-					issuer:  microsoftRootCAName,
-					subject: microsoftPCASubject,
-					serial:  microsoftPCASerial,
-					owner:   microsoftOwnerGuid,
-				},
-				{
-					issuer:  microsoftThirdPartyRootCAName,
-					subject: microsoftCASubject,
-					serial:  microsoftCASerial,
-					owner:   microsoftOwnerGuid,
-				},
-				{
-					issuer:  "CN=Test Key Exchange Key",
-					subject: "CN=Test UEFI CA",
-					serial:  decodeHexStringT(t, "01"),
-					owner:   testOwnerGuid,
-				},
-			},
-			signatures: 3,
-		},
-		{
-			desc: "db3",
-			path: "testdata/efivars3/db-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			certs: []certId{
-				{
-					issuer:  microsoftRootCAName,
-					subject: microsoftPCASubject,
-					serial:  microsoftPCASerial,
-					owner:   microsoftOwnerGuid,
-				},
-				{
-					issuer:  microsoftThirdPartyRootCAName,
-					subject: microsoftCASubject,
-					serial:  microsoftCASerial,
-					owner:   microsoftOwnerGuid,
-				},
-				{
-					issuer:  "CN=Test Key Exchange Key",
-					subject: "CN=Test UEFI CA",
-					serial:  decodeHexStringT(t, "01"),
-					owner:   testOwnerGuid,
-				},
-				{
-					issuer:  "CN=Test Key Exchange Key",
-					subject: "CN=Test UEFI CA 2",
-					serial:  decodeHexStringT(t, "02"),
-					owner:   testOwnerGuid,
-				},
-			},
-			signatures: 4,
-		},
-		{
-			desc: "dbx1",
-			path: "testdata/efivars1/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			certs: []certId{
-				{
-					issuer:  microsoftRootCAName,
-					subject: "CN=Microsoft Windows PCA 2010,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US",
-					serial:  decodeHexStringT(t, "610c6a19000000000004"),
-					owner:   efi.MakeGUID(0x00000000, 0x0000, 0x0000, 0x0000, [...]uint8{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}),
-				},
-			},
-			signatures: 78,
-		},
-		{
-			desc:       "dbx2",
-			path:       "testdata/efivars2/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f",
-			signatures: 1,
-		},
-	} {
-		t.Run(data.desc, func(t *testing.T) {
-			d, err := ioutil.ReadFile(data.path)
-			if err != nil {
-				t.Fatalf("ReadFile failed: %v", err)
-			}
-
-			signatures, err := DecodeSecureBootDb(bytes.NewReader(d[4:]))
-			if err != nil {
-				t.Fatalf("decodeSecureBootDb failed: %v", err)
-			}
-			if len(signatures) != data.signatures {
-				t.Fatalf("Unexpected number of signatures (got %d, expected %d)", len(signatures), data.signatures)
-			}
-			i := 0
-			for _, sig := range signatures {
-				if sig.SignatureType() != EFICertX509Guid {
-					continue
-				}
-
-				c, err := x509.ParseCertificate(sig.Data())
-				if err != nil {
-					t.Errorf("ParseCertificate failed: %v", err)
-				}
-
-				if sig.Owner() != data.certs[i].owner {
-					t.Errorf("Unexpected owner (got %s, expected %s)", sig.Owner(), data.certs[i].owner)
-				}
-				if c.Issuer.String() != data.certs[i].issuer {
-					t.Errorf("Unexpected issuer: %s", c.Issuer)
-				}
-				if c.Subject.String() != data.certs[i].subject {
-					t.Errorf("Unexpected subject: %s", c.Subject.String())
-				}
-				if !bytes.Equal(c.SerialNumber.Bytes(), data.certs[i].serial) {
-					t.Errorf("Unexpected serial number (got %x, expected %x)", c.SerialNumber.Bytes(), data.certs[i].serial)
-				}
-				i++
 			}
 		})
 	}
@@ -384,11 +220,13 @@ func TestComputeDbUpdate(t *testing.T) {
 				t.Fatalf("Open failed: %v", err)
 			}
 			defer orig.Close()
-			origReader := io.NewSectionReader(orig, 4, (1<<63)-5)
-			origSignatures, err := DecodeSecureBootDb(origReader)
+
+			origVal := io.NewSectionReader(orig, 4, (1<<63)-5)
+			origDb, err := efi.DecodeSignatureDatabase(origVal)
 			if err != nil {
-				t.Errorf("DecodeSecureBootDb failed: %v", err)
+				t.Errorf("DecodeSignatureDatabase failed: %v", err)
 			}
+			origVal.Seek(0, io.SeekStart)
 
 			update, err := os.Open(data.update)
 			if err != nil {
@@ -396,31 +234,38 @@ func TestComputeDbUpdate(t *testing.T) {
 			}
 			defer update.Close()
 
-			db, err := ComputeDbUpdate(origReader, update, data.quirkMode)
+			b, err := ComputeDbUpdate(origVal, update, data.quirkMode)
 			if err != nil {
 				t.Fatalf("ComputeDbUpdate failed: %v", err)
 			}
+			origVal.Seek(0, io.SeekStart)
 
 			// Ensure that an append was performed (ie, the original contents are unmofified)
-			origReader.Seek(0, io.SeekStart)
-			origDb, err := ioutil.ReadAll(origReader)
+			origB, err := ioutil.ReadAll(origVal)
 			if err != nil {
 				t.Fatalf("ReadAll failed: %v", err)
 			}
 
-			if !bytes.Equal(origDb, db[:len(origDb)]) {
+			if !bytes.Equal(origB, b[:len(origB)]) {
 				t.Errorf("ComputeDbUpdate didn't perform an append")
 			}
 
 			// Ensure that the result is well formed
-			signatures, err := DecodeSecureBootDb(bytes.NewReader(db))
+			updatedDb, err := efi.DecodeSignatureDatabase(bytes.NewReader(b))
 			if err != nil {
-				t.Errorf("DecodeSecureBootDb failed: %v", err)
+				t.Errorf("DecodeSignatureDatabase failed: %v", err)
+			}
+
+			countSignatures := func(db efi.SignatureDatabase) (out int) {
+				for _, l := range db {
+					out += len(l.Signatures)
+				}
+				return
 			}
 
 			// Check we got the expected number of new signatures
-			if (len(signatures) - len(origSignatures)) != data.newSignatures {
-				t.Errorf("Incorrect number of new signatures (got %d, expected %d)", len(signatures)-len(origSignatures), data.newSignatures)
+			if (countSignatures(updatedDb) - countSignatures(origDb)) != data.newSignatures {
+				t.Errorf("Incorrect number of new signatures")
 			}
 
 			// Lastly, verify the contents against a known good digest
@@ -432,7 +277,7 @@ func TestComputeDbUpdate(t *testing.T) {
 			if err := binary.Write(h, binary.LittleEndian, attrs); err != nil {
 				t.Fatalf("binary.Write failed: %v", err)
 			}
-			h.Write(db)
+			h.Write(b)
 
 			if !bytes.Equal(data.sha1hash, h.Sum(nil)) {
 				t.Errorf("Unexpected updated contents (sha1 got %x, expected %x)", h.Sum(nil), data.sha1hash)

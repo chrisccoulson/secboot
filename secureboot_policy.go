@@ -66,8 +66,6 @@ var (
 	efiGlobalVariableGuid        = efi.MakeGUID(0x8be4df61, 0x93ca, 0x11d2, 0xaa0d, [...]uint8{0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c}) // EFI_GLOBAL_VARIABLE
 	efiImageSecurityDatabaseGuid = efi.MakeGUID(0xd719b2cb, 0x3d3a, 0x4596, 0xa3bc, [...]uint8{0xda, 0xd0, 0x0e, 0x67, 0x65, 0x6f}) // EFI_IMAGE_SECURITY_DATABASE_GUID
 
-	efiCertX509Guid = efi.MakeGUID(0xa5c059a1, 0x94e4, 0x4aa7, 0x87b5, [...]uint8{0xab, 0x15, 0x5c, 0x2b, 0xf0, 0x72}) // EFI_CERT_X509_GUID
-
 	oidSha256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
 )
 
@@ -116,130 +114,6 @@ func readShimVendorCert(r io.ReaderAt) ([]byte, error) {
 	return certData, nil
 }
 
-// secureBootDbIterator provides a mechanism to iterate over a set of EFI_SIGNATURE_LIST entries in a EFI signature database.
-type secureBootDbIterator struct {
-	r io.ReadSeeker
-}
-
-// nextSignatureList returns the SignatureType, SignatureHeader and EFI_SIGNATURE_DATA entries associated with the next
-// EFI_SIGNATURE_LIST.
-func (d *secureBootDbIterator) nextSignatureList() (efi.GUID, []byte, [][]byte, error) {
-	start, _ := d.r.Seek(0, io.SeekCurrent)
-
-	// Decode EFI_SIGNATURE_LIST.SignatureType
-	var signatureType efi.GUID
-	if _, err := io.ReadFull(d.r, signatureType[:]); err != nil {
-		if err == io.EOF {
-			return efi.GUID{}, nil, nil, err
-		}
-		return efi.GUID{}, nil, nil, xerrors.Errorf("cannot read EFI_SIGNATURE_LIST.SignatureType: %w", err)
-	}
-
-	// Decode EFI_SIGNATURE_LIST.SignatureListSize, which indicates the size of the entire EFI_SIGNATURE_LIST,
-	// including all of the EFI_SIGNATURE_DATA entries.
-	var signatureListSize uint32
-	if err := binary.Read(d.r, binary.LittleEndian, &signatureListSize); err != nil {
-		return efi.GUID{}, nil, nil, xerrors.Errorf("cannot read EFI_SIGNATURE_LIST.SignatureListSize: %w", err)
-	}
-
-	// Decode EFI_SIGNATURE_LIST.SignatureHeaderSize, which indicates the size of the optional header data between
-	// the core EFI_SIGNATURE_LIST fields and the EFI_SIGNATURE_DATA entries.
-	// Always zero for the signature types we care about.
-	var signatureHeaderSize uint32
-	if err := binary.Read(d.r, binary.LittleEndian, &signatureHeaderSize); err != nil {
-		return efi.GUID{}, nil, nil, xerrors.Errorf("cannot read EFI_SIGNATURE_LIST.SignatureHeaderSize: %w", err)
-	}
-
-	// Decode EFI_SIGNATURE_LIST.SignatureSize, which indicates the size of each EFI_SIGNATURE_DATA entry.
-	var signatureSize uint32
-	if err := binary.Read(d.r, binary.LittleEndian, &signatureSize); err != nil {
-		return efi.GUID{}, nil, nil, xerrors.Errorf("cannot read EFI_SIGNATURE_LIST.SignatureSize: %w", err)
-	}
-	if signatureSize < 16 {
-		return efi.GUID{}, nil, nil, errors.New("EFI_SIGNATURE_LIST.SignatureSize is invalid")
-	}
-
-	signatureHeader := make([]byte, signatureHeaderSize)
-	if _, err := io.ReadFull(d.r, signatureHeader); err != nil {
-		return efi.GUID{}, nil, nil, xerrors.Errorf("cannot read EFI_SIGNATURE_LIST.SignatureHeader: %w", err)
-	}
-
-	// Calculate the number of EFI_SIGNATURE_DATA entries
-	endOfHeader, _ := d.r.Seek(0, io.SeekCurrent)
-	signatureDataSize := int64(signatureListSize) - endOfHeader + start
-	if signatureDataSize%int64(signatureSize) != 0 {
-		return efi.GUID{}, nil, nil, errors.New("EFI_SIGNATURE_LIST has inconsistent SignatureListSize, SignatureHeaderSize and SignatureSize fields")
-	}
-	numOfSignatures := signatureDataSize / int64(signatureSize)
-
-	var signatures [][]byte
-
-	// Iterate over each EFI_SIGNATURE_DATA entry
-	for i := int64(0); i < numOfSignatures; i++ {
-		signature := make([]byte, signatureSize)
-		if _, err := io.ReadFull(d.r, signature); err != nil {
-			return efi.GUID{}, nil, nil, xerrors.Errorf("cannot read EFI_SIGNATURE_DATA entry at index %d: %w", i, err)
-		}
-		signatures = append(signatures, signature)
-	}
-
-	return signatureType, signatureHeader, signatures, nil
-}
-
-// efiSignatureData corresponds to a EFI_SIGNATURE_DATA entry from a secure boot database, with the inclusion of the SignatureType
-// field of the EFI_SIGNATURE_LIST that the the signature was obtained from.
-type efiSignatureData struct {
-	signatureType efi.GUID
-	owner         efi.GUID
-	data          []byte
-}
-
-func (e *efiSignatureData) encode(buf io.Writer) error {
-	if _, err := buf.Write(e.owner[:]); err != nil {
-		return fmt.Errorf("cannot write signature owner: %v", err)
-	}
-	if _, err := buf.Write(e.data); err != nil {
-		return fmt.Errorf("cannot write signature data: %v", err)
-	}
-	return nil
-}
-
-// decodeSecureBootDb parses a EFI signature database from r and returns a list of efiSignatureData structures corresponding to
-// all of the EFI_SIGNATURE_DATA entries.
-func decodeSecureBootDb(r io.ReadSeeker) ([]*efiSignatureData, error) {
-	var out []*efiSignatureData
-
-	iter := &secureBootDbIterator{r}
-	for i := 0; ; i++ {
-		sigType, _, sigs, err := iter.nextSignatureList()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, xerrors.Errorf("cannot obtain signature list at %d: %w", i, err)
-		}
-
-		for j, sig := range sigs {
-			sr := bytes.NewReader(sig)
-
-			// Decode EFI_SIGNATURE_DATA.SignatureOwner
-			var signatureOwner efi.GUID
-			if _, err := io.ReadFull(sr, signatureOwner[:]); err != nil {
-				return nil, xerrors.Errorf("cannot decode EFI_SIGNATURE_DATA.SignatureOwner for signature at index %d in list index %d: %w", j, i, err)
-			}
-
-			data, err := ioutil.ReadAll(sr)
-			if err != nil {
-				return nil, xerrors.Errorf("cannot obtain EFI_SIGNATURE_DATA.SignatureData for signature at index %d in list index %d: %w", j, i, err)
-			}
-
-			out = append(out, &efiSignatureData{signatureType: sigType, owner: signatureOwner, data: data})
-		}
-	}
-
-	return out, nil
-}
-
 type sigDbUpdateQuirkMode int
 
 const (
@@ -252,51 +126,49 @@ const (
 
 // computeDbUpdate appends the EFI signature database update supplied via update to the signature database supplied via orig, filtering
 // out EFI_SIGNATURE_DATA entries that are already in orig and then returning the result.
-func computeDbUpdate(orig io.ReaderAt, update io.ReadSeeker, quirkMode sigDbUpdateQuirkMode) ([]byte, error) {
+func computeDbUpdate(orig, update io.Reader, quirkMode sigDbUpdateQuirkMode) ([]byte, error) {
 	_, err := efi.DecodeTimeBasedVariableAuthentication(update)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot decode EFI_VARIABLE_AUTHENTICATION_2 header from update: %w", err)
 	}
 
-	filteredUpdate := new(bytes.Buffer)
+	origDb, err := efi.DecodeSignatureDatabase(orig)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot decode original database: %w", err)
+	}
 
-	updateIter := &secureBootDbIterator{update}
-	for i := 0; ; i++ {
-		updateSigType, updateSigHeader, updateSigs, err := updateIter.nextSignatureList()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, xerrors.Errorf("cannot obtain signature list from update at index %d: %w", i, err)
-		}
+	updateDb, err := efi.DecodeSignatureDatabase(update)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot decode update: %w", err)
+	}
 
-		var newSigs bytes.Buffer
-		var updateSigSize int
+	var filteredUpdateDb efi.SignatureDatabase
 
-		for _, updateSig := range updateSigs {
+	for _, updateList := range updateDb {
+		newList := &efi.SignatureList{Type: updateList.Type, Header: updateList.Header}
+
+		for _, updateSig := range updateList.Signatures {
 			isNewSig := true
 
-			iter := &secureBootDbIterator{io.NewSectionReader(orig, 0, (1<<63)-1)}
-			for j := 0; ; j++ {
-				sigType, _, sigs, err := iter.nextSignatureList()
-				if err != nil {
-					if err == io.EOF {
-						break
-					}
-					return nil, xerrors.Errorf("cannot obtain signature list from target at index %d: %w", j, err)
-				}
-				if sigType != updateSigType {
+			var updateSigRaw bytes.Buffer
+			updateSig.Encode(&updateSigRaw)
+
+			for _, origList := range origDb {
+				if updateList.Type != origList.Type {
 					// EFI_SIGNATURE_LIST.SignatureType doesn't match
 					continue
 				}
-				for _, sig := range sigs {
+
+				for _, origSig := range origList.Signatures {
 					switch quirkMode {
 					case sigDbUpdateQuirkModeNone:
-						if bytes.Equal(sig, updateSig) {
+						var origSigRaw bytes.Buffer
+						origSig.Encode(&origSigRaw)
+						if bytes.Equal(updateSigRaw.Bytes(), origSigRaw.Bytes()) {
 							isNewSig = false
 						}
 					case sigDbUpdateQuirkModeDedupIgnoresOwner:
-						if bytes.Equal(sig[16:], updateSig[16:]) {
+						if bytes.Equal(updateSig.Data, origSig.Data) {
 							isNewSig = false
 						}
 					}
@@ -310,60 +182,24 @@ func computeDbUpdate(orig io.ReaderAt, update io.ReadSeeker, quirkMode sigDbUpda
 			}
 
 			if isNewSig {
-				updateSigSize = len(updateSig)
-				if _, err := newSigs.Write(updateSig); err != nil {
-					return nil, xerrors.Errorf("cannot write new signature to temporary buffer: %w", err)
-				}
+				newList.Signatures = append(newList.Signatures, updateSig)
 			}
 		}
 
-		if newSigs.Len() == 0 {
+		if len(newList.Signatures) == 0 {
 			continue
 		}
 
-		// This EFI_SIGNATURE_LIST has new signatures, so encode them to filteredSrc
-
-		// Encode EFI_SIGNATURE_LIST.SignatureType
-		if err := binary.Write(filteredUpdate, binary.LittleEndian, updateSigType); err != nil {
-			return nil, xerrors.Errorf("cannot encode new EFI_SIGNATURE_LIST.SignatureType: %w", err)
-		}
-
-		// Calculate and encode EFI_SIGNATURE_LIST.SignatureListSize. This includes EFI_SIGNATURE_LIST.SignatureType (16 bytes),
-		// EFI_SIGNATURE_LIST.SignatureListSize (4 bytes), EFI_SIGNATURE_LIST.SignatureHeaderSize (4 bytes),
-		// EFI_SIGNATURE_LIST.SignatureSize (4 bytes), EFI_SIGNATURE_LIST.SignatureHeader and EFI_SIGNATURE_LIST.Signatures.
-		signatureListSize := uint32(binary.Size(efi.GUID{})) + 12 + uint32(len(updateSigHeader)) + uint32(newSigs.Len())
-		if err := binary.Write(filteredUpdate, binary.LittleEndian, uint32(signatureListSize)); err != nil {
-			return nil, xerrors.Errorf("cannot write new EFI_SIGNATURE_LIST.SignatureListSize: %w", err)
-		}
-
-		// Encode EFI_SIGNATURE_LIST.SignatureHeaderSize
-		if err := binary.Write(filteredUpdate, binary.LittleEndian, uint32(len(updateSigHeader))); err != nil {
-			return nil, xerrors.Errorf("cannot write new EFI_SIGNATURE_LIST.SignatureHeaderSize: %w", err)
-		}
-
-		// Encode EFI_SIGNATURE_LIST.SignatureSize
-		if err := binary.Write(filteredUpdate, binary.LittleEndian, uint32(updateSigSize)); err != nil {
-			return nil, xerrors.Errorf("cannot write new EFI_SIGNATURE_LIST.SignatureSize: %w", err)
-		}
-
-		// Write EFI_SIGNATURE_LIST.SignatureHeader
-		if _, err := filteredUpdate.Write(updateSigHeader); err != nil {
-			return nil, xerrors.Errorf("cannot write new EFI_SIGNATURE_LIST.SignatureHeader: %w", err)
-		}
-
-		// Write the saved EFI_SIGNATURE_DATA entries for this list
-		if _, err := filteredUpdate.ReadFrom(&newSigs); err != nil {
-			return nil, xerrors.Errorf("cannot write new EFI_SIGNATURE_DATA entries: %w", err)
-		}
+		// This EFI_SIGNATURE_LIST has new signatures, so add it to filteredUpdateDb
+		filteredUpdateDb = append(filteredUpdateDb, newList)
 	}
 
-	res := new(bytes.Buffer)
-
-	if _, err := res.ReadFrom(io.NewSectionReader(orig, 0, (1<<63)-1)); err != nil {
-		return nil, xerrors.Errorf("cannot write original database to target: %w", err)
+	var res bytes.Buffer
+	if err := origDb.Encode(&res); err != nil {
+		return nil, xerrors.Errorf("cannot encode original database: %w", err)
 	}
-	if _, err := res.ReadFrom(filteredUpdate); err != nil {
-		return nil, xerrors.Errorf("cannot write filtered update to target: %w", err)
+	if err := filteredUpdateDb.Encode(&res); err != nil {
+		return nil, xerrors.Errorf("cannot encode filtered update: %w", err)
 	}
 
 	return res.Bytes(), nil
@@ -540,7 +376,7 @@ type EFISecureBootPolicyProfileParams struct {
 type secureBootDb struct {
 	variableName efi.GUID
 	unicodeName  string
-	signatures   []*efiSignatureData
+	signatures   efi.SignatureDatabase
 }
 
 // secureBootDbSet corresponds to a set of EFI signature databases.
@@ -551,7 +387,7 @@ type secureBootDbSet struct {
 }
 
 type secureBootAuthority struct {
-	signature *efiSignatureData
+	signature *efi.SignatureData
 	source    *secureBootDb
 }
 
@@ -693,7 +529,7 @@ func (b *secureBootPolicyGenBranch) processDbMeasurementEvent(updates []*secureB
 		return err
 	}
 
-	sigs, err := decodeSecureBootDb(bytes.NewReader(db))
+	sigs, err := efi.DecodeSignatureDatabase(bytes.NewReader(db))
 	if err != nil {
 		return xerrors.Errorf("cannot decode DB contents: %w", err)
 	}
@@ -762,7 +598,7 @@ func (b *secureBootPolicyGenBranch) processPreOSEvents(events []*tcglog.Event, i
 func (b *secureBootPolicyGenBranch) processShimExecutableLaunch(vendorCert []byte) {
 	b.dbSet.shimDb = &secureBootDb{variableName: shimGuid, unicodeName: shimName}
 	if vendorCert != nil {
-		b.dbSet.shimDb.signatures = append(b.dbSet.shimDb.signatures, &efiSignatureData{signatureType: efiCertX509Guid, data: vendorCert})
+		b.dbSet.shimDb.signatures = append(b.dbSet.shimDb.signatures, &efi.SignatureList{Type: efi.CertX509Guid, Signatures: []*efi.SignatureData{{Data: vendorCert}}})
 	}
 	b.shimVerificationEvents = nil
 }
@@ -820,30 +656,32 @@ Outer:
 				continue
 			}
 
-			for _, caSig := range db.signatures {
+			for _, sigList := range db.signatures {
 				// Ignore signatures that aren't X509 certificates
-				if caSig.signatureType != efiCertX509Guid {
+				if sigList.Type != efi.CertX509Guid {
 					continue
 				}
 
-				ca, err := x509.ParseCertificate(caSig.data)
-				if err != nil {
-					continue
-				}
+				for _, sigData := range sigList.Signatures {
+					ca, err := x509.ParseCertificate(sigData.Data)
+					if err != nil {
+						continue
+					}
 
-				// XXX: This doesn't work if there isn't a direct relationship between the
-				// signing certificate and the CA (ie, there are intermediates). Ideally we
-				// would use x509.Certificate.Verify here, but there is no way to turn off
-				// time checking and UEFI doesn't consider expired certificates invalid.
-				if bytes.Equal(ca.Raw, sig.signer.Raw) {
-					// The signer certificate is the CA
-					authority = &secureBootAuthority{signature: caSig, source: db}
-					break Outer
-				}
-				if err := sig.signer.CheckSignatureFrom(ca); err == nil {
-					// The signer certificate is directly trusted by the CA
-					authority = &secureBootAuthority{signature: caSig, source: db}
-					break Outer
+					// XXX: This doesn't work if there isn't a direct relationship between the
+					// signing certificate and the CA (ie, there are intermediates). Ideally we
+					// would use x509.Certificate.Verify here, but there is no way to turn off
+					// time checking and UEFI doesn't consider expired certificates invalid.
+					if bytes.Equal(ca.Raw, sig.signer.Raw) {
+						// The signer certificate is the CA
+						authority = &secureBootAuthority{signature: sigData, source: db}
+						break Outer
+					}
+					if err := sig.signer.CheckSignatureFrom(ca); err == nil {
+						// The signer certificate is directly trusted by the CA
+						authority = &secureBootAuthority{signature: sigData, source: db}
+						break Outer
+					}
 				}
 			}
 		}
@@ -861,12 +699,12 @@ Outer:
 	case Firmware:
 		// Firmware measures the entire EFI_SIGNATURE_DATA, including the SignatureOwner
 		varData = new(bytes.Buffer)
-		if err := authority.signature.encode(varData); err != nil {
+		if err := authority.signature.Encode(varData); err != nil {
 			return xerrors.Errorf("cannot encode EFI_SIGNATURE_DATA for authority: %w", err)
 		}
 	case Shim:
 		// Shim measures the certificate data, rather than the entire EFI_SIGNATURE_DATA
-		varData = bytes.NewBuffer(authority.signature.data)
+		varData = bytes.NewBuffer(authority.signature.Data)
 	}
 
 	// Create event data, compute digest and perform extension for verification of this executable

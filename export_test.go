@@ -53,8 +53,6 @@ var (
 	ComputeStaticPolicy                      = computeStaticPolicy
 	CreatePinNVIndex                         = createPinNVIndex
 	CreatePublicAreaForRSASigningKey         = createPublicAreaForRSASigningKey
-	DecodeSecureBootDb                       = decodeSecureBootDb
-	EFICertX509Guid                          = efiCertX509Guid
 	EnsureLockNVIndex                        = ensureLockNVIndex
 	ExecutePolicySession                     = executePolicySession
 	IdentifyInitialOSLaunchVerificationEvent = identifyInitialOSLaunchVerificationEvent
@@ -71,20 +69,6 @@ var (
 // Alias some unexported types for testing. These are required in order to pass these between functions in tests, or to access
 // unexported members of some unexported types.
 type DynamicPolicyData dynamicPolicyData
-
-type EFISignatureData = efiSignatureData
-
-func (s *EFISignatureData) SignatureType() efi.GUID {
-	return s.signatureType
-}
-
-func (s *EFISignatureData) Owner() efi.GUID {
-	return s.owner
-}
-
-func (s *EFISignatureData) Data() []byte {
-	return s.data
-}
 
 type SecureBootVerificationEvent = secureBootVerificationEvent
 
