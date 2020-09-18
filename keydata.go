@@ -238,31 +238,31 @@ func decodeKeyPolicyUpdateData(r io.Reader) (*keyPolicyUpdateData, error) {
 
 // keyDataRaw_v0 is version 0 of the on-disk format of keyDataRaw.
 type keyDataRaw_v0 struct {
-	KeyPrivate        tpm2.Private
-	KeyPublic         *tpm2.Public
-	AuthModeHint      AuthMode
-	StaticPolicyData  *staticPolicyDataRaw_v0
-	DynamicPolicyData *dynamicPolicyDataRaw_v0
+	KeyPrivate       tpm2.Private
+	KeyPublic        *tpm2.Public
+	AuthModeHint     AuthMode
+	StaticPolicyData *staticPolicyDataRaw_v0
+	PCRPolicyData    *pcrPolicyDataRaw_v0
 }
 
 // keyDataRaw_v1 is version 1 of the on-disk format of keyDataRaw.
 type keyDataRaw_v1 struct {
-	KeyPrivate        tpm2.Private
-	KeyPublic         *tpm2.Public
-	AuthModeHint      AuthMode
-	StaticPolicyData  *staticPolicyDataRaw_v1
-	DynamicPolicyData *dynamicPolicyDataRaw_v0
+	KeyPrivate       tpm2.Private
+	KeyPublic        *tpm2.Public
+	AuthModeHint     AuthMode
+	StaticPolicyData *staticPolicyDataRaw_v1
+	PCRPolicyData    *pcrPolicyDataRaw_v0
 }
 
 // keyData corresponds to the part of a sealed key object that contains the TPM sealed object and associated metadata required
 // for executing authorization policy assertions.
 type keyData struct {
-	version           uint32
-	keyPrivate        tpm2.Private
-	keyPublic         *tpm2.Public
-	authModeHint      AuthMode
-	staticPolicyData  *staticPolicyData
-	dynamicPolicyData *dynamicPolicyData
+	version          uint32
+	keyPrivate       tpm2.Private
+	keyPublic        *tpm2.Public
+	authModeHint     AuthMode
+	staticPolicyData *staticPolicyData
+	pcrPolicyData    *pcrPolicyData
 }
 
 func (d *keyData) Marshal(w io.Writer) (nbytes int, err error) {
@@ -275,21 +275,21 @@ func (d *keyData) Marshal(w io.Writer) (nbytes int, err error) {
 	switch d.version {
 	case 0:
 		raw := keyDataRaw_v0{
-			KeyPrivate:        d.keyPrivate,
-			KeyPublic:         d.keyPublic,
-			AuthModeHint:      d.authModeHint,
-			StaticPolicyData:  makeStaticPolicyDataRaw_v0(d.staticPolicyData),
-			DynamicPolicyData: makeDynamicPolicyDataRaw_v0(d.dynamicPolicyData)}
+			KeyPrivate:       d.keyPrivate,
+			KeyPublic:        d.keyPublic,
+			AuthModeHint:     d.authModeHint,
+			StaticPolicyData: makeStaticPolicyDataRaw_v0(d.staticPolicyData),
+			PCRPolicyData:    makePcrPolicyDataRaw_v0(d.pcrPolicyData)}
 		n, err := tpm2.MarshalToWriter(w, raw)
 		return nbytes + n, err
 	case 1:
 		var tmpW bytes.Buffer
 		raw := keyDataRaw_v1{
-			KeyPrivate:        d.keyPrivate,
-			KeyPublic:         d.keyPublic,
-			AuthModeHint:      d.authModeHint,
-			StaticPolicyData:  makeStaticPolicyDataRaw_v1(d.staticPolicyData),
-			DynamicPolicyData: makeDynamicPolicyDataRaw_v0(d.dynamicPolicyData)}
+			KeyPrivate:       d.keyPrivate,
+			KeyPublic:        d.keyPublic,
+			AuthModeHint:     d.authModeHint,
+			StaticPolicyData: makeStaticPolicyDataRaw_v1(d.staticPolicyData),
+			PCRPolicyData:    makePcrPolicyDataRaw_v0(d.pcrPolicyData)}
 		if _, err := tpm2.MarshalToWriter(&tmpW, raw); err != nil {
 			return 0, xerrors.Errorf("cannot marshal data: %w", err)
 		}
@@ -321,12 +321,12 @@ func (d *keyData) Unmarshal(r io.Reader) (nbytes int, err error) {
 			return nbytes, xerrors.Errorf("cannot unmarshal data: %w", err)
 		}
 		*d = keyData{
-			version:           version,
-			keyPrivate:        raw.KeyPrivate,
-			keyPublic:         raw.KeyPublic,
-			authModeHint:      raw.AuthModeHint,
-			staticPolicyData:  raw.StaticPolicyData.data(),
-			dynamicPolicyData: raw.DynamicPolicyData.data()}
+			version:          version,
+			keyPrivate:       raw.KeyPrivate,
+			keyPublic:        raw.KeyPublic,
+			authModeHint:     raw.AuthModeHint,
+			staticPolicyData: raw.StaticPolicyData.data(),
+			pcrPolicyData:    raw.PCRPolicyData.data()}
 	case 1:
 		var splitData afSplitDataRaw
 		n, err := tpm2.UnmarshalFromReader(r, &splitData)
@@ -345,12 +345,12 @@ func (d *keyData) Unmarshal(r io.Reader) (nbytes int, err error) {
 			return nbytes, xerrors.Errorf("cannot unmarshal data: %w", err)
 		}
 		*d = keyData{
-			version:           version,
-			keyPrivate:        raw.KeyPrivate,
-			keyPublic:         raw.KeyPublic,
-			authModeHint:      raw.AuthModeHint,
-			staticPolicyData:  raw.StaticPolicyData.data(),
-			dynamicPolicyData: raw.DynamicPolicyData.data()}
+			version:          version,
+			keyPrivate:       raw.KeyPrivate,
+			keyPublic:        raw.KeyPublic,
+			authModeHint:     raw.AuthModeHint,
+			staticPolicyData: raw.StaticPolicyData.data(),
+			pcrPolicyData:    raw.PCRPolicyData.data()}
 	default:
 		return nbytes, fmt.Errorf("unexpected version number (%d)", version)
 	}

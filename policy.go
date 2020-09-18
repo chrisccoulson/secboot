@@ -45,8 +45,8 @@ var (
 	lockNVIndexAttrs = tpm2.NVTypeOrdinary.WithAttrs(tpm2.AttrNVPolicyWrite | tpm2.AttrNVAuthRead | tpm2.AttrNVNoDA | tpm2.AttrNVReadStClear)
 )
 
-// dynamicPolicyComputeParams provides the parameters to computeDynamicPolicy.
-type dynamicPolicyComputeParams struct {
+// pcrPolicyComputeParams provides the parameters to computePcrPolicy.
+type pcrPolicyComputeParams struct {
 	key crypto.PrivateKey // Key used to authorize the generated dynamic authorization policy
 
 	// signAlg is the digest algorithm for the signature used to authorize the generated dynamic authorization policy. It must
@@ -67,8 +67,8 @@ type policyOrDataNode struct {
 
 type policyOrDataTree []policyOrDataNode
 
-// dynamicPolicyData is an output of computeDynamicPolicy and provides metadata for executing a policy session.
-type dynamicPolicyData struct {
+// pcrPolicyData is an output of computePcrPolicy and provides metadata for executing a policy session.
+type pcrPolicyData struct {
 	pcrSelection              tpm2.PCRSelectionList
 	pcrOrData                 policyOrDataTree
 	policyCount               uint64
@@ -76,8 +76,8 @@ type dynamicPolicyData struct {
 	authorizedPolicySignature *tpm2.Signature
 }
 
-// dynamicPolicyDataRaw_v0 is version 0 of the on-disk format of dynamicPolicyData.
-type dynamicPolicyDataRaw_v0 struct {
+// pcrPolicyDataRaw_v0 is version 0 of the on-disk format of pcrPolicyData.
+type pcrPolicyDataRaw_v0 struct {
 	PCRSelection              tpm2.PCRSelectionList
 	PCROrData                 policyOrDataTree
 	PolicyCount               uint64
@@ -85,8 +85,8 @@ type dynamicPolicyDataRaw_v0 struct {
 	AuthorizedPolicySignature *tpm2.Signature
 }
 
-func (d *dynamicPolicyDataRaw_v0) data() *dynamicPolicyData {
-	return &dynamicPolicyData{
+func (d *pcrPolicyDataRaw_v0) data() *pcrPolicyData {
+	return &pcrPolicyData{
 		pcrSelection:              d.PCRSelection,
 		pcrOrData:                 d.PCROrData,
 		policyCount:               d.PolicyCount,
@@ -94,9 +94,9 @@ func (d *dynamicPolicyDataRaw_v0) data() *dynamicPolicyData {
 		authorizedPolicySignature: d.AuthorizedPolicySignature}
 }
 
-// makeDynamicPolicyDataRaw_v0 converts dynamicPolicyData to version 0 of the on-disk format.
-func makeDynamicPolicyDataRaw_v0(data *dynamicPolicyData) *dynamicPolicyDataRaw_v0 {
-	return &dynamicPolicyDataRaw_v0{
+// makePcrPolicyDataRaw_v0 converts pcrPolicyData to version 0 of the on-disk format.
+func makePcrPolicyDataRaw_v0(data *pcrPolicyData) *pcrPolicyDataRaw_v0 {
+	return &pcrPolicyDataRaw_v0{
 		PCRSelection:              data.pcrSelection,
 		PCROrData:                 data.pcrOrData,
 		PolicyCount:               data.policyCount,
@@ -716,7 +716,7 @@ func computePcrPolicyRefFromCounterContext(context tpm2.ResourceContext) tpm2.No
 
 // computeStaticPolicy computes the part of an authorization policy that is bound to a sealed key object and never changes. The
 // static policy asserts that the following are true:
-// - The signed PCR policy created by computeDynamicPolicy is valid and has been satisfied (by way of a PolicyAuthorize assertion,
+// - The signed PCR policy created by computePcrPolicy is valid and has been satisfied (by way of a PolicyAuthorize assertion,
 //   which allows the PCR policy to be updated without creating a new sealed key object).
 // - Knowledge of the the authorization value for the entity on which the policy session is used has been demonstrated by the
 //   caller (in SealedKeyObject.UnsealFromTPM where the policy session is used for authorizing unsealing the sealed key object,
@@ -808,7 +808,7 @@ func computePolicyORData(alg tpm2.HashAlgorithmId, trial *tpm2.TrialAuthPolicy, 
 	return data
 }
 
-// computeDynamicPolicy computes the PCR policy associated with a sealed key object, and can be updated without having to create a
+// computePcrPolicy computes the PCR policy associated with a sealed key object, and can be updated without having to create a
 // new sealed key object as it takes advantage of the PolicyAuthorize assertion. The PCR policy asserts that the following are true:
 // - The selected PCRs contain expected values - ie, one of the sets of permitted values specified by the caller to this function,
 //   indicating that the device is in an expected state. This is done by a single PolicyPCR assertion and then one or more PolicyOR
@@ -817,7 +817,7 @@ func computePolicyORData(alg tpm2.HashAlgorithmId, trial *tpm2.TrialAuthPolicy, 
 //   is not greater than the expected value.
 // The computed PCR policy digest is signed with the supplied asymmetric key, and the signature of this is validated before executing
 // the corresponding PolicyAuthorize assertion as part of the static policy.
-func computeDynamicPolicy(version uint32, alg tpm2.HashAlgorithmId, input *dynamicPolicyComputeParams) (*dynamicPolicyData, error) {
+func computePcrPolicy(version uint32, alg tpm2.HashAlgorithmId, input *pcrPolicyComputeParams) (*pcrPolicyData, error) {
 	if len(input.pcrDigests) == 0 {
 		return nil, errors.New("no PCR digests specified")
 	}
@@ -878,7 +878,7 @@ func computeDynamicPolicy(version uint32, alg tpm2.HashAlgorithmId, input *dynam
 					SignatureS: sigS.Bytes()}}}
 	}
 
-	return &dynamicPolicyData{
+	return &pcrPolicyData{
 		pcrSelection:              input.pcrs,
 		pcrOrData:                 pcrOrData,
 		policyCount:               input.policyCount,
@@ -903,9 +903,9 @@ func isPolicyDataError(err error) bool {
 	return xerrors.As(err, &e)
 }
 
-// executePolicyORAssertions takes the data produced by computePolicyORData and executes a sequence of TPM2_PolicyOR assertions, in
+// executeAssertions takes the data produced by computePolicyORData and executes a sequence of TPM2_PolicyOR assertions, in
 // order to support compound policies with more than 8 conditions.
-func executePolicyORAssertions(tpm *tpm2.TPMContext, session tpm2.SessionContext, data policyOrDataTree) error {
+func (data policyOrDataTree) executeAssertions(tpm *tpm2.TPMContext, session tpm2.SessionContext) error {
 	// First of all, obtain the current digest of the session.
 	currentDigest, err := tpm.PolicyGetDigest(session)
 	if err != nil {
@@ -949,15 +949,94 @@ func executePolicyORAssertions(tpm *tpm2.TPMContext, session tpm2.SessionContext
 	return nil
 }
 
-// executePolicySession executes an authorization policy session using the supplied metadata. On success, the supplied policy
-// session can be used for authorization.
-func executePolicySession(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, staticInput *staticPolicyData,
-	dynamicInput *dynamicPolicyData, pin string, hmacSession tpm2.SessionContext) error {
-	if err := tpm.PolicyPCR(policySession, nil, dynamicInput.pcrSelection); err != nil {
+type authorizedPolicy struct {
+	policy    tpm2.Digest
+	ref       tpm2.Nonce
+	signature *tpm2.Signature
+}
+
+func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, authorizedPolicy *authorizedPolicy, pin string, hmacSession tpm2.SessionContext) error {
+	authPublicKey := d.authPublicKey
+	if !authPublicKey.NameAlg.Supported() {
+		return keyDataError{errors.New("public area of dynamic authorization policy signing key has an unsupported name algorithm")}
+	}
+	authorizeKey, err := tpm.LoadExternal(nil, authPublicKey, tpm2.HandleOwner)
+	if err != nil {
+		if tpm2.IsTPMParameterError(err, tpm2.AnyErrorCode, tpm2.CommandLoadExternal, 2) {
+			// d.authPublicKey is invalid
+			return keyDataError{errors.New("public area of dynamic authorization policy signing key is invalid")}
+		}
+		return xerrors.Errorf("cannot load public area for dynamic authorization policy signing key: %w", err)
+	}
+	defer tpm.FlushContext(authorizeKey)
+
+	h := authPublicKey.NameAlg.NewHash()
+	h.Write(authorizedPolicy.policy)
+	h.Write(authorizedPolicy.ref)
+
+	authorizeTicket, err := tpm.VerifySignature(authorizeKey, h.Sum(nil), authorizedPolicy.signature)
+	if err != nil {
+		if tpm2.IsTPMParameterError(err, tpm2.AnyErrorCode, tpm2.CommandVerifySignature, 2) {
+			// authorizedPolicy.signature or authorizedPolicy.ref is invalid.
+			// XXX: It's not possible to determine whether this is broken dynamic or static metadata -
+			//  we should just do away with the distinction here tbh
+			return policyDataError{errors.New("cannot verify PCR policy signature")}
+		}
+		return xerrors.Errorf("cannot verify PCR policy signature: %w", err)
+	}
+
+	if err := tpm.PolicyAuthorize(policySession, authorizedPolicy.policy, authorizedPolicy.ref, authorizeKey.Name(), authorizeTicket); err != nil {
+		if tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyAuthorize, 1) {
+			// pcrInput.AuthorizedPolicy is invalid.
+			return policyDataError{errors.New("the PCR policy is invalid")}
+		}
+		return xerrors.Errorf("PCR policy check failed: %w", err)
+	}
+
+	if version == 0 {
+		// For metadata version 0, PIN support is implemented by asserting knowlege of the authorization value
+		// for the PCR policy counter.
+		pinIndexHandle := d.pcrPolicyCounterHandle
+		if pinIndexHandle.Type() != tpm2.HandleTypeNVIndex {
+			return keyDataError{errors.New("invalid handle for PIN NV index")}
+		}
+		pinIndex, err := tpm.CreateResourceContextFromTPM(pinIndexHandle)
+		switch {
+		case tpm2.IsResourceUnavailableError(err, pinIndexHandle):
+			// If there is no NV index at the expected handle then the key file is invalid and must be recreated.
+			return keyDataError{errors.New("no PIN NV index found")}
+		case err != nil:
+			return xerrors.Errorf("cannot obtain context for PIN NV index: %w", err)
+		}
+		pinIndex.SetAuthValue([]byte(pin))
+		if _, _, err := tpm.PolicySecret(pinIndex, policySession, nil, nil, 0, hmacSession); err != nil {
+			return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
+		}
+	} else {
+		// For metadata versions > 0, PIN support is implemented by requiring knowlege of the authorization value for
+		// the sealed key object when this policy session is used to unseal it.
+		if err := tpm.PolicyAuthValue(policySession); err != nil {
+			return xerrors.Errorf("cannot execute PolicyAuthValue assertion: %w", err)
+		}
+	}
+
+	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
+	if err != nil {
+		return xerrors.Errorf("cannot obtain context for lock NV index: %w", err)
+	}
+	if err := tpm.PolicyNV(lockIndex, lockIndex, policySession, nil, 0, tpm2.OpEq, hmacSession); err != nil {
+		return xerrors.Errorf("policy lock check failed: %w", err)
+	}
+
+	return nil
+}
+
+func (d *pcrPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, staticData *staticPolicyData, pin string, hmacSession tpm2.SessionContext) error {
+	if err := tpm.PolicyPCR(policySession, nil, d.pcrSelection); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertion: %w", err)
 	}
 
-	if err := executePolicyORAssertions(tpm, policySession, dynamicInput.pcrOrData); err != nil {
+	if err := d.pcrOrData.executeAssertions(tpm, policySession); err != nil {
 		switch {
 		case tpm2.IsTPMError(err, tpm2.AnyErrorCode, tpm2.CommandPolicyGetDigest):
 			return xerrors.Errorf("cannot execute OR assertions: %w", err)
@@ -969,7 +1048,7 @@ func executePolicySession(tpm *tpm2.TPMContext, policySession tpm2.SessionContex
 		return policyDataError{xerrors.Errorf("cannot complete OR assertions for PCR policy: %w", err)}
 	}
 
-	pcrPolicyCounterHandle := staticInput.pcrPolicyCounterHandle
+	pcrPolicyCounterHandle := staticData.pcrPolicyCounterHandle
 	if (pcrPolicyCounterHandle != tpm2.HandleNull || version == 0) && pcrPolicyCounterHandle.Type() != tpm2.HandleTypeNVIndex {
 		return keyDataError{errors.New("invalid handle type for PCR policy counter")}
 	}
@@ -1005,9 +1084,9 @@ func executePolicySession(tpm *tpm2.TPMContext, policySession tpm2.SessionContex
 			if err := tpm.PolicyCommandCode(revocationCheckSession, tpm2.CommandPolicyNV); err != nil {
 				return xerrors.Errorf("cannot execute assertion for PCR policy revocation check: %w", err)
 			}
-			if err := tpm.PolicyOR(revocationCheckSession, staticInput.v0PinIndexAuthPolicies); err != nil {
+			if err := tpm.PolicyOR(revocationCheckSession, staticData.v0PinIndexAuthPolicies); err != nil {
 				if tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyOR, 1) {
-					// staticInput.v0PinIndexAuthPolicies is invalid.
+					// staticData.v0PinIndexAuthPolicies is invalid.
 					return keyDataError{errors.New("authorization policy metadata for PCR policy counter is invalid")}
 				}
 				return xerrors.Errorf("cannot execute assertion for PCR policy revocation check: %w", err)
@@ -1015,7 +1094,7 @@ func executePolicySession(tpm *tpm2.TPMContext, policySession tpm2.SessionContex
 		}
 
 		operandB := make([]byte, 8)
-		binary.BigEndian.PutUint64(operandB, dynamicInput.policyCount)
+		binary.BigEndian.PutUint64(operandB, d.policyCount)
 		if err := tpm.PolicyNV(policyCounter, policyCounter, policySession, operandB, 0, tpm2.OpUnsignedLE, revocationCheckSession); err != nil {
 			switch {
 			case tpm2.IsTPMError(err, tpm2.ErrorPolicy, tpm2.CommandPolicyNV):
@@ -1023,82 +1102,26 @@ func executePolicySession(tpm *tpm2.TPMContext, policySession tpm2.SessionContex
 				// not assuming that for now (SealedKeyObject.Validate can detect this)
 				return policyDataError{errors.New("the PCR policy has been revoked")}
 			case tpm2.IsTPMSessionError(err, tpm2.ErrorPolicyFail, tpm2.CommandPolicyNV, 1):
-				// Either staticInput.v0PinIndexAuthPolicies is invalid or the NV index isn't what's expected, so the key data is invalid.
+				// Either staticData.v0PinIndexAuthPolicies is invalid or the NV index isn't what's expected, so the key data is invalid.
 				return keyDataError{errors.New("invalid PCR policy counter or associated authorization policy metadata")}
 			}
 			return xerrors.Errorf("PCR policy revocation check failed: %w", err)
 		}
 	}
 
-	authPublicKey := staticInput.authPublicKey
-	if !authPublicKey.NameAlg.Supported() {
-		return keyDataError{errors.New("public area of dynamic authorization policy signing key has an unsupported name algorithm")}
-	}
-	authorizeKey, err := tpm.LoadExternal(nil, authPublicKey, tpm2.HandleOwner)
-	if err != nil {
-		if tpm2.IsTPMParameterError(err, tpm2.AnyErrorCode, tpm2.CommandLoadExternal, 2) {
-			// staticInput.AuthPublicKey is invalid
-			return keyDataError{errors.New("public area of dynamic authorization policy signing key is invalid")}
-		}
-		return xerrors.Errorf("cannot load public area for dynamic authorization policy signing key: %w", err)
-	}
-	defer tpm.FlushContext(authorizeKey)
-
-	var pcrPolicyRef tpm2.Nonce
+	var policyRef tpm2.Nonce
 	if version > 0 {
 		// The authorized PCR policy signature contains a reference for > v0 metadata, which limits the scope of it for authorizing
 		// PCR policy. In future, the key that authorizes this policy may be used to authorize other policy digests for the purposes of,
 		// eg, recovery with a signed assertion.
-		pcrPolicyRef = computePcrPolicyRefFromCounterContext(policyCounter)
+		policyRef = computePcrPolicyRefFromCounterContext(policyCounter)
 	}
 
-	h := authPublicKey.NameAlg.NewHash()
-	h.Write(dynamicInput.authorizedPolicy)
-	h.Write(pcrPolicyRef)
-
-	authorizeTicket, err := tpm.VerifySignature(authorizeKey, h.Sum(nil), dynamicInput.authorizedPolicySignature)
-	if err != nil {
-		if tpm2.IsTPMParameterError(err, tpm2.AnyErrorCode, tpm2.CommandVerifySignature, 2) {
-			// dynamicInput.AuthorizedPolicySignature, the signing key, or the PCR policy counter is invalid. Assume it is the former
-			// for now (SealedKeyObject.Validate can detect the others).
-			return policyDataError{errors.New("cannot verify PCR policy signature")}
-		}
-		return xerrors.Errorf("cannot verify PCR policy signature: %w", err)
-	}
-
-	if err := tpm.PolicyAuthorize(policySession, dynamicInput.authorizedPolicy, pcrPolicyRef, authorizeKey.Name(), authorizeTicket); err != nil {
-		if tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyAuthorize, 1) {
-			// dynamicInput.AuthorizedPolicy is invalid.
-			return policyDataError{errors.New("the PCR policy is invalid")}
-		}
-		return xerrors.Errorf("PCR policy check failed: %w", err)
-	}
-
-	if version == 0 {
-		// For metadata version 0, PIN support is implemented by asserting knowlege of the authorization value
-		// for the PCR policy counter.
-		policyCounter.SetAuthValue([]byte(pin))
-		if _, _, err := tpm.PolicySecret(policyCounter, policySession, nil, nil, 0, hmacSession); err != nil {
-			return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
-		}
-	} else {
-		// For metadata versions > 0, PIN support is implemented by requiring knowlege of the authorization value for
-		// the sealed key object when this policy session is used to unseal it.
-		if err := tpm.PolicyAuthValue(policySession); err != nil {
-			return xerrors.Errorf("cannot execute PolicyAuthValue assertion: %w", err)
-		}
-	}
-
-	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
-	if err != nil {
-		return xerrors.Errorf("cannot obtain context for lock NV index: %w", err)
-	}
-	if err := tpm.PolicyNV(lockIndex, lockIndex, policySession, nil, 0, tpm2.OpEq, hmacSession); err != nil {
-		return xerrors.Errorf("policy lock check failed: %w", err)
-	}
-
-	return nil
+	return staticData.executeAssertions(tpm, policySession, version, &authorizedPolicy{policy: d.authorizedPolicy, ref: policyRef, signature: d.authorizedPolicySignature}, pin, hmacSession)
 }
+
+// executePcrPolicySession executes a PCR authorization policy session using the supplied metadata. On success, the supplied policy
+// session can be used for authorization.
 
 // LockAccessToSealedKeys locks access to keys sealed by this package until the next TPM restart (equivalent to eg, system resume
 // from suspend-to-disk) or TPM reset (equivalent to booting after a system restart). This works for all keys sealed by this package

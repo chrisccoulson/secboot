@@ -286,7 +286,7 @@ func TestSealKeyToTPMErrorHandling(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Expected an error")
 		}
-		if err.Error() != "cannot compute dynamic authorization policy: cannot compute PCR digests from protection profile: not all "+
+		if err.Error() != "cannot compute PCR policy: cannot compute PCR digests from protection profile: not all "+
 			"branches contain values for the same sets of PCRs" {
 			t.Errorf("Unexpected error: %v", err)
 		}
@@ -298,7 +298,7 @@ func TestSealKeyToTPMErrorHandling(t *testing.T) {
 		if err == nil {
 			t.Fatalf("Expected an error")
 		}
-		if err.Error() != "cannot compute dynamic authorization policy: PCR protection profile contains digests for unsupported PCRs" {
+		if err.Error() != "cannot compute PCR policy: PCR protection profile contains digests for unsupported PCRs" {
 			t.Errorf("Unexpected error: %v", err)
 		}
 	})

@@ -40,7 +40,7 @@ const (
 // Export variables and unexported functions for testing
 var (
 	ComputeDbUpdate                          = computeDbUpdate
-	ComputeDynamicPolicy                     = computeDynamicPolicy
+	ComputePcrPolicy                         = computePcrPolicy
 	CreatePcrPolicyCounter                   = createPcrPolicyCounter
 	ComputePcrPolicyCounterAuthPolicies      = computePcrPolicyCounterAuthPolicies
 	ComputePcrPolicyRefFromCounterContext    = computePcrPolicyRefFromCounterContext
@@ -55,7 +55,6 @@ var (
 	EFICertTypePkcs7Guid                     = efiCertTypePkcs7Guid
 	EFICertX509Guid                          = efiCertX509Guid
 	EnsureLockNVIndex                        = ensureLockNVIndex
-	ExecutePolicySession                     = executePolicySession
 	IdentifyInitialOSLaunchVerificationEvent = identifyInitialOSLaunchVerificationEvent
 	IncrementPcrPolicyCounter                = incrementPcrPolicyCounter
 	IsKeyDataError                           = isKeyDataError
@@ -71,30 +70,34 @@ var (
 
 // Alias some unexported types for testing. These are required in order to pass these between functions in tests, or to access
 // unexported members of some unexported types.
-type DynamicPolicyData = dynamicPolicyData
+type PcrPolicyData = pcrPolicyData
 
-func (d *DynamicPolicyData) PCRSelection() tpm2.PCRSelectionList {
+func (d *PcrPolicyData) PCRSelection() tpm2.PCRSelectionList {
 	return d.pcrSelection
 }
 
-func (d *DynamicPolicyData) PCROrData() policyOrDataTree {
+func (d *PcrPolicyData) PCROrData() policyOrDataTree {
 	return d.pcrOrData
 }
 
-func (d *DynamicPolicyData) PolicyCount() uint64 {
+func (d *PcrPolicyData) PolicyCount() uint64 {
 	return d.policyCount
 }
 
-func (d *DynamicPolicyData) SetPolicyCount(c uint64) {
+func (d *PcrPolicyData) SetPolicyCount(c uint64) {
 	d.policyCount = c
 }
 
-func (d *DynamicPolicyData) AuthorizedPolicy() tpm2.Digest {
+func (d *PcrPolicyData) AuthorizedPolicy() tpm2.Digest {
 	return d.authorizedPolicy
 }
 
-func (d *DynamicPolicyData) AuthorizedPolicySignature() *tpm2.Signature {
+func (d *PcrPolicyData) AuthorizedPolicySignature() *tpm2.Signature {
 	return d.authorizedPolicySignature
+}
+
+func (d *PcrPolicyData) ExecuteAssertions(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, staticData *StaticPolicyData, pin string, hmacSession tpm2.SessionContext) error {
+	return d.executeAssertions(tpm, policySession, version, staticData, pin, hmacSession)
 }
 
 type EFISignatureData efiSignatureData
@@ -224,9 +227,8 @@ func MockSystemdCryptsetupPath(path string) (restore func()) {
 	}
 }
 
-func NewDynamicPolicyComputeParams(key *ecdsa.PrivateKey, signAlg tpm2.HashAlgorithmId, pcrs tpm2.PCRSelectionList,
-	pcrDigests tpm2.DigestList, policyCounterName tpm2.Name, policyCount uint64) *dynamicPolicyComputeParams {
-	return &dynamicPolicyComputeParams{
+func NewPcrPolicyComputeParams(key *ecdsa.PrivateKey, signAlg tpm2.HashAlgorithmId, pcrs tpm2.PCRSelectionList, pcrDigests tpm2.DigestList, policyCounterName tpm2.Name, policyCount uint64) *pcrPolicyComputeParams {
+	return &pcrPolicyComputeParams{
 		key:               key,
 		signAlg:           signAlg,
 		pcrs:              pcrs,

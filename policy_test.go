@@ -869,7 +869,7 @@ func TestComputePolicyORData(t *testing.T) {
 	}
 }
 
-func TestComputeDynamicPolicy(t *testing.T) {
+func TestComputePcrPolicy(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), testutil.RandReader)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
@@ -1105,10 +1105,10 @@ func TestComputeDynamicPolicy(t *testing.T) {
 				d, _ := tpm2.ComputePCRDigest(data.alg, data.pcrs, v)
 				pcrDigests = append(pcrDigests, d)
 			}
-			dataout, err := ComputeDynamicPolicy(CurrentMetadataVersion, data.alg, NewDynamicPolicyComputeParams(key, data.signAlg, data.pcrs, pcrDigests, data.policyCounterName, data.policyCount))
+			dataout, err := ComputePcrPolicy(CurrentMetadataVersion, data.alg, NewPcrPolicyComputeParams(key, data.signAlg, data.pcrs, pcrDigests, data.policyCounterName, data.policyCount))
 			if data.err == "" {
 				if err != nil {
-					t.Fatalf("ComputeDynamicPolicy failed: %v", err)
+					t.Fatalf("ComputePcrPolicy failed: %v", err)
 				}
 				if !dataout.PCRSelection().Equal(data.pcrSelection) {
 					t.Errorf("Unexpected PCR selection")
@@ -1141,7 +1141,7 @@ func TestComputeDynamicPolicy(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Fatalf("ComputeDynamicPolicy should have failed")
+					t.Fatalf("ComputePcrPolicy should have failed")
 				}
 				if err.Error() != data.err {
 					t.Errorf("Unexpected error: %v", err)
@@ -1198,7 +1198,7 @@ func TestExecutePolicy(t *testing.T) {
 		pcrEvents        []pcrEvent
 	}
 
-	run := func(t *testing.T, data *testData, prepare func(*StaticPolicyData, *DynamicPolicyData)) (tpm2.Digest, tpm2.Digest, error) {
+	run := func(t *testing.T, data *testData, prepare func(*StaticPolicyData, *PcrPolicyData)) (tpm2.Digest, tpm2.Digest, error) {
 		tpm, tcti = resetTPMSimulator(t, tpm, tcti)
 
 		lockIndex, err := tpm.CreateResourceContextFromTPM(LockNVHandle)
@@ -1221,10 +1221,10 @@ func TestExecutePolicy(t *testing.T) {
 			d, _ := tpm2.ComputePCRDigest(data.alg, data.pcrs, v)
 			pcrDigests = append(pcrDigests, d)
 		}
-		dynamicPolicyData, err := ComputeDynamicPolicy(CurrentMetadataVersion, data.alg,
-			NewDynamicPolicyComputeParams(key, signAlg, data.pcrs, pcrDigests, policyCounterName, data.policyCount))
+		dynamicPolicyData, err := ComputePcrPolicy(CurrentMetadataVersion, data.alg,
+			NewPcrPolicyComputeParams(key, signAlg, data.pcrs, pcrDigests, policyCounterName, data.policyCount))
 		if err != nil {
-			t.Fatalf("ComputeDynamicPolicy failed: %v", err)
+			t.Fatalf("ComputePcrPolicy failed: %v", err)
 		}
 
 		for _, e := range data.pcrEvents {
@@ -1243,7 +1243,7 @@ func TestExecutePolicy(t *testing.T) {
 		}
 		defer flushContext(t, tpm, session)
 
-		policyErr := ExecutePolicySession(tpm.TPMContext, session, CurrentMetadataVersion, staticPolicyData, dynamicPolicyData, "", tpm.HmacSession())
+		policyErr := dynamicPolicyData.ExecuteAssertions(tpm.TPMContext, session, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
 		digest, err := tpm.PolicyGetDigest(session)
 		if err != nil {
 			t.Errorf("PolicyGetDigest failed: %v", err)
@@ -1796,7 +1796,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(*StaticPolicyData, *DynamicPolicyData) {
+			}}, func(*StaticPolicyData, *PcrPolicyData) {
 			lockIndex, err := tpm.CreateResourceContextFromTPM(LockNVHandle)
 			if err != nil {
 				t.Fatalf("CreateResourceContextFromTPM failed: %v", err)
@@ -1845,7 +1845,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			s.SetPcrPolicyCounterHandle(0x40ffffff)
 		})
 		if !IsKeyDataError(err) || err.Error() != "invalid handle type for PCR policy counter" {
@@ -1888,7 +1888,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			s.SetPcrPolicyCounterHandle(s.PcrPolicyCounterHandle() + 1)
 		})
 		if !tpm2.IsResourceUnavailableError(err, policyCounterPub.Index+1) ||
@@ -1933,7 +1933,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			s.AuthPublicKey().NameAlg = tpm2.HashAlgorithmId(tpm2.AlgorithmSM4)
 		})
 		if !IsKeyDataError(err) || err.Error() != "public area of dynamic authorization policy signing key has an unsupported "+
@@ -1978,7 +1978,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			key, err := ecdsa.GenerateKey(elliptic.P256(), testutil.RandReader)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
@@ -2027,7 +2027,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			key, err := ecdsa.GenerateKey(elliptic.P256(), testutil.RandReader)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
@@ -2092,7 +2092,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			key, err := ecdsa.GenerateKey(elliptic.P256(), testutil.RandReader)
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
@@ -2158,7 +2158,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			d.SetPolicyCount(d.PolicyCount() + 1)
 		})
 		if !IsPolicyDataError(err) || err.Error() != "the PCR policy is invalid" {
@@ -2203,7 +2203,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			d.PCROrData()[0].Next = 1000
 		})
 		if err != nil {
@@ -2254,7 +2254,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			d.PCROrData()[0].Next = 1000
 		})
 		if !IsPolicyDataError(err) || err.Error() != "the PCR policy is invalid" {
@@ -2305,7 +2305,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			x := int32(-10)
 			d.PCROrData()[0].Next = *(*uint32)(unsafe.Pointer(&x))
 		})
@@ -2387,7 +2387,7 @@ func TestExecutePolicy(t *testing.T) {
 					index: 12,
 					data:  "foo",
 				},
-			}}, func(s *StaticPolicyData, d *DynamicPolicyData) {
+			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			s.SetPcrPolicyCounterHandle(policyCounterPub.Index)
 			d.SetPolicyCount(policyCount)
 		})
@@ -2450,10 +2450,10 @@ func TestLockAccessToSealedKeys(t *testing.T) {
 	signAlg := staticPolicyData.AuthPublicKey().NameAlg
 	pcrs := tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: []int{7}}}
 	pcrDigest, _ := tpm2.ComputePCRDigest(tpm2.HashAlgorithmSHA256, pcrs, tpm2.PCRValues{tpm2.HashAlgorithmSHA256: {7: testutil.MakePCRValueFromEvents(tpm2.HashAlgorithmSHA256, "foo")}})
-	dynamicPolicyData, err := ComputeDynamicPolicy(CurrentMetadataVersion, tpm2.HashAlgorithmSHA256,
-		NewDynamicPolicyComputeParams(key, signAlg, pcrs, tpm2.DigestList{pcrDigest}, policyCounter.Name(), policyCount))
+	dynamicPolicyData, err := ComputePcrPolicy(CurrentMetadataVersion, tpm2.HashAlgorithmSHA256,
+		NewPcrPolicyComputeParams(key, signAlg, pcrs, tpm2.DigestList{pcrDigest}, policyCounter.Name(), policyCount))
 	if err != nil {
-		t.Fatalf("ComputeDynamicPolicy failed: %v", err)
+		t.Fatalf("ComputePcrPolicy failed: %v", err)
 	}
 
 	for i := 0; i < 2; i++ {
@@ -2470,7 +2470,7 @@ func TestLockAccessToSealedKeys(t *testing.T) {
 			}
 			defer flushContext(t, tpm, policySession)
 
-			err = ExecutePolicySession(tpm.TPMContext, policySession, CurrentMetadataVersion, staticPolicyData, dynamicPolicyData, "", tpm.HmacSession())
+			err = dynamicPolicyData.ExecuteAssertions(tpm.TPMContext, policySession, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
 			if err != nil {
 				t.Errorf("ExecutePolicySession failed: %v", err)
 			}
@@ -2492,7 +2492,7 @@ func TestLockAccessToSealedKeys(t *testing.T) {
 				t.Errorf("PolicyRestart failed: %v", err)
 			}
 
-			err = ExecutePolicySession(tpm.TPMContext, policySession, CurrentMetadataVersion, staticPolicyData, dynamicPolicyData, "", tpm.HmacSession())
+			err = dynamicPolicyData.ExecuteAssertions(tpm.TPMContext, policySession, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
 			if !tpm2.IsTPMError(err, tpm2.ErrorNVLocked, tpm2.CommandPolicyNV) {
 				t.Errorf("Unexpected error: %v", err)
 			}
