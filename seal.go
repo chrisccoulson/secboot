@@ -101,7 +101,7 @@ func computeSealedKeyPcrPolicy(tpm *tpm2.TPMContext, version uint32, alg, signAl
 		key:               authKey,
 		signAlg:           signAlg,
 		pcrs:              pcrs,
-		pcrDigests:        pcrDigests,
+		digests:           pcrDigests,
 		policyCounterName: counterName,
 		policyCount:       nextPolicyCount}
 

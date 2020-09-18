@@ -72,12 +72,12 @@ var (
 // unexported members of some unexported types.
 type PcrPolicyData = pcrPolicyData
 
-func (d *PcrPolicyData) PCRSelection() tpm2.PCRSelectionList {
-	return d.pcrSelection
+func (d *PcrPolicyData) PCRs() tpm2.PCRSelectionList {
+	return d.pcrs
 }
 
-func (d *PcrPolicyData) PCROrData() policyOrDataTree {
-	return d.pcrOrData
+func (d *PcrPolicyData) OrData() policyOrDataTree {
+	return d.orData
 }
 
 func (d *PcrPolicyData) PolicyCount() uint64 {
@@ -227,12 +227,12 @@ func MockSystemdCryptsetupPath(path string) (restore func()) {
 	}
 }
 
-func NewPcrPolicyComputeParams(key *ecdsa.PrivateKey, signAlg tpm2.HashAlgorithmId, pcrs tpm2.PCRSelectionList, pcrDigests tpm2.DigestList, policyCounterName tpm2.Name, policyCount uint64) *pcrPolicyComputeParams {
+func NewPcrPolicyComputeParams(key *ecdsa.PrivateKey, signAlg tpm2.HashAlgorithmId, pcrs tpm2.PCRSelectionList, digests tpm2.DigestList, policyCounterName tpm2.Name, policyCount uint64) *pcrPolicyComputeParams {
 	return &pcrPolicyComputeParams{
 		key:               key,
 		signAlg:           signAlg,
 		pcrs:              pcrs,
-		pcrDigests:        pcrDigests,
+		digests:           digests,
 		policyCounterName: policyCounterName,
 		policyCount:       policyCount}
 }

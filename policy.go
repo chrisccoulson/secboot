@@ -53,7 +53,7 @@ type pcrPolicyComputeParams struct {
 	// match the name algorithm of the public part of key that will be loaded in to the TPM for verification.
 	signAlg           tpm2.HashAlgorithmId
 	pcrs              tpm2.PCRSelectionList // PCR selection
-	pcrDigests        tpm2.DigestList       // Approved PCR digests
+	digests           tpm2.DigestList       // Approved PCR digests
 	policyCounterName tpm2.Name             // Name of the NV index used for revoking authorization policies
 	policyCount       uint64                // Count for this policy, used for revocation
 }
@@ -69,8 +69,8 @@ type policyOrDataTree []policyOrDataNode
 
 // pcrPolicyData is an output of computePcrPolicy and provides metadata for executing a policy session.
 type pcrPolicyData struct {
-	pcrSelection              tpm2.PCRSelectionList
-	pcrOrData                 policyOrDataTree
+	pcrs                      tpm2.PCRSelectionList
+	orData                    policyOrDataTree
 	policyCount               uint64
 	authorizedPolicy          tpm2.Digest
 	authorizedPolicySignature *tpm2.Signature
@@ -78,8 +78,8 @@ type pcrPolicyData struct {
 
 // pcrPolicyDataRaw_v0 is version 0 of the on-disk format of pcrPolicyData.
 type pcrPolicyDataRaw_v0 struct {
-	PCRSelection              tpm2.PCRSelectionList
-	PCROrData                 policyOrDataTree
+	PCRs                      tpm2.PCRSelectionList
+	OrData                    policyOrDataTree
 	PolicyCount               uint64
 	AuthorizedPolicy          tpm2.Digest
 	AuthorizedPolicySignature *tpm2.Signature
@@ -87,8 +87,8 @@ type pcrPolicyDataRaw_v0 struct {
 
 func (d *pcrPolicyDataRaw_v0) data() *pcrPolicyData {
 	return &pcrPolicyData{
-		pcrSelection:              d.PCRSelection,
-		pcrOrData:                 d.PCROrData,
+		pcrs:                      d.PCRs,
+		orData:                    d.OrData,
 		policyCount:               d.PolicyCount,
 		authorizedPolicy:          d.AuthorizedPolicy,
 		authorizedPolicySignature: d.AuthorizedPolicySignature}
@@ -97,8 +97,8 @@ func (d *pcrPolicyDataRaw_v0) data() *pcrPolicyData {
 // makePcrPolicyDataRaw_v0 converts pcrPolicyData to version 0 of the on-disk format.
 func makePcrPolicyDataRaw_v0(data *pcrPolicyData) *pcrPolicyDataRaw_v0 {
 	return &pcrPolicyDataRaw_v0{
-		PCRSelection:              data.pcrSelection,
-		PCROrData:                 data.pcrOrData,
+		PCRs:                      data.pcrs,
+		OrData:                    data.orData,
 		PolicyCount:               data.policyCount,
 		AuthorizedPolicy:          data.authorizedPolicy,
 		AuthorizedPolicySignature: data.authorizedPolicySignature}
@@ -818,20 +818,20 @@ func computePolicyORData(alg tpm2.HashAlgorithmId, trial *tpm2.TrialAuthPolicy, 
 // The computed PCR policy digest is signed with the supplied asymmetric key, and the signature of this is validated before executing
 // the corresponding PolicyAuthorize assertion as part of the static policy.
 func computePcrPolicy(version uint32, alg tpm2.HashAlgorithmId, input *pcrPolicyComputeParams) (*pcrPolicyData, error) {
-	if len(input.pcrDigests) == 0 {
+	if len(input.digests) == 0 {
 		return nil, errors.New("no PCR digests specified")
 	}
 
 	// Compute the policy digest that would result from a TPM2_PolicyPCR assertion for each condition
 	var pcrOrDigests tpm2.DigestList
-	for _, d := range input.pcrDigests {
+	for _, d := range input.digests {
 		trial, _ := tpm2.ComputeAuthPolicy(alg)
 		trial.PolicyPCR(d, input.pcrs)
 		pcrOrDigests = append(pcrOrDigests, trial.GetDigest())
 	}
 
 	trial, _ := tpm2.ComputeAuthPolicy(alg)
-	pcrOrData := computePolicyORData(alg, trial, pcrOrDigests)
+	orData := computePolicyORData(alg, trial, pcrOrDigests)
 
 	if len(input.policyCounterName) > 0 {
 		operandB := make([]byte, 8)
@@ -879,8 +879,8 @@ func computePcrPolicy(version uint32, alg tpm2.HashAlgorithmId, input *pcrPolicy
 	}
 
 	return &pcrPolicyData{
-		pcrSelection:              input.pcrs,
-		pcrOrData:                 pcrOrData,
+		pcrs:                      input.pcrs,
+		orData:                    orData,
 		policyCount:               input.policyCount,
 		authorizedPolicy:          authorizedPolicy,
 		authorizedPolicySignature: &signature}, nil
@@ -1032,11 +1032,11 @@ func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession
 }
 
 func (d *pcrPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, staticData *staticPolicyData, pin string, hmacSession tpm2.SessionContext) error {
-	if err := tpm.PolicyPCR(policySession, nil, d.pcrSelection); err != nil {
+	if err := tpm.PolicyPCR(policySession, nil, d.pcrs); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertion: %w", err)
 	}
 
-	if err := d.pcrOrData.executeAssertions(tpm, policySession); err != nil {
+	if err := d.orData.executeAssertions(tpm, policySession); err != nil {
 		switch {
 		case tpm2.IsTPMError(err, tpm2.AnyErrorCode, tpm2.CommandPolicyGetDigest):
 			return xerrors.Errorf("cannot execute OR assertions: %w", err)

@@ -1110,10 +1110,10 @@ func TestComputePcrPolicy(t *testing.T) {
 				if err != nil {
 					t.Fatalf("ComputePcrPolicy failed: %v", err)
 				}
-				if !dataout.PCRSelection().Equal(data.pcrSelection) {
+				if !dataout.PCRs().Equal(data.pcrSelection) {
 					t.Errorf("Unexpected PCR selection")
 				}
-				// TODO: Test dataout.PCROrData
+				// TODO: Test dataout.OrData
 
 				if dataout.PolicyCount() != data.policyCount {
 					t.Errorf("Unexpected policy revocation count")
@@ -2204,7 +2204,7 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
-			d.PCROrData()[0].Next = 1000
+			d.OrData()[0].Next = 1000
 		})
 		if err != nil {
 			t.Errorf("Failed to execute policy session: %v", err)
@@ -2255,7 +2255,7 @@ func TestExecutePolicy(t *testing.T) {
 					data:  "foo",
 				},
 			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
-			d.PCROrData()[0].Next = 1000
+			d.OrData()[0].Next = 1000
 		})
 		if !IsPolicyDataError(err) || err.Error() != "the PCR policy is invalid" {
 			t.Errorf("Unexpected error: %v", err)
@@ -2307,7 +2307,7 @@ func TestExecutePolicy(t *testing.T) {
 				},
 			}}, func(s *StaticPolicyData, d *PcrPolicyData) {
 			x := int32(-10)
-			d.PCROrData()[0].Next = *(*uint32)(unsafe.Pointer(&x))
+			d.OrData()[0].Next = *(*uint32)(unsafe.Pointer(&x))
 		})
 		if !IsPolicyDataError(err) || err.Error() != "the PCR policy is invalid" {
 			t.Errorf("Unexpected error: %v", err)
