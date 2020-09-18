@@ -542,18 +542,18 @@ AwEHoUQDQgAEkxoOhf6oe3ZE91Kl97qMH/WndK1B0gD7nuqXzPnwtxBBWhTF6pbw
 			desc:                "SHA256",
 			alg:                 tpm2.HashAlgorithmSHA256,
 			pcrPolicyCounterPub: pcrPolicyCounterPub,
-			policy:              decodeHexStringT(t, "c5254ead173361569199cee1479ff329d1b4f0d329c794d7c362e0ed6aa43dbe"),
+			policy:              decodeHexStringT(t, "5f6401faddae88a697faab3285f45e223ca4c771981af81718c131322b77f070"),
 		},
 		{
 			desc:                "SHA1",
 			alg:                 tpm2.HashAlgorithmSHA1,
 			pcrPolicyCounterPub: pcrPolicyCounterPub,
-			policy:              decodeHexStringT(t, "e502a0d62dfc7a61ccf1b3e7814729532761171a"),
+			policy:              decodeHexStringT(t, "915d9b80566318c25155ebf05d90e8aeadc16c14"),
 		},
 		{
 			desc:   "NoPolicyCounter",
 			alg:    tpm2.HashAlgorithmSHA256,
-			policy: decodeHexStringT(t, "594b23bea81ac48f593fdb179e35f74a23ca002d97415fc1a95b424b59fcdf28"),
+			policy: decodeHexStringT(t, "236c148cc673ebe3ac4c9210bb96d503a1a0b8865227bee074f39b9fc15ae53f"),
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -2060,8 +2060,7 @@ func TestExecutePolicy(t *testing.T) {
 
 	t.Run("InvalidMetadata/DynamicPolicySignature/2", func(t *testing.T) {
 		// Test handling of the public area of the dynamic policy authorization key being replaced by one corresponding to a different key,
-		// and the authorized policy signature being replaced with a signature signed by the new key (execution should succeed, but the
-		// resulting session digest shouldn't match the computed policy digest)
+		// and the authorized policy signature being replaced with a signature signed by the new key (execution should fail).
 		expected, digest, err := run(t, &testData{
 			alg:  tpm2.HashAlgorithmSHA256,
 			pcrs: tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: []int{7, 12}}},
@@ -2117,8 +2116,8 @@ func TestExecutePolicy(t *testing.T) {
 			d.AuthorizedPolicySignature().Signature.ECDSA().SignatureR = sigR.Bytes()
 			d.AuthorizedPolicySignature().Signature.ECDSA().SignatureS = sigS.Bytes()
 		})
-		if err != nil {
-			t.Errorf("Failed to execute policy session: %v", err)
+		if !IsKeyDataError(err) || err.Error() != "cannot complete OR assertion for authorized policy: current session digest is invalid" {
+			t.Errorf("Unexpected error: %v", err)
 		}
 		if bytes.Equal(digest, expected) {
 			t.Errorf("Session digest shouldn't match policy digest")

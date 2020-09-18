@@ -114,6 +114,7 @@ type staticPolicyComputeParams struct {
 // staticPolicyData is an output of computeStaticPolicy and provides metadata for executing a policy session.
 type staticPolicyData struct {
 	authPublicKey          *tpm2.Public
+	authorizedDigests      tpm2.DigestList
 	pcrPolicyCounterHandle tpm2.Handle
 	v0PinIndexAuthPolicies tpm2.DigestList
 }
@@ -143,6 +144,7 @@ func makeStaticPolicyDataRaw_v0(data *staticPolicyData) *staticPolicyDataRaw_v0 
 // staticPolicyDataRaw_v1 is version 1 of the on-disk format of staticPolicyData.
 type staticPolicyDataRaw_v1 struct {
 	AuthPublicKey          *tpm2.Public
+	AuthorizedDigests      tpm2.DigestList
 	PCRPolicyCounterHandle tpm2.Handle
 	PCRPolicyRef           tpm2.Nonce
 }
@@ -150,6 +152,7 @@ type staticPolicyDataRaw_v1 struct {
 func (d *staticPolicyDataRaw_v1) data() *staticPolicyData {
 	return &staticPolicyData{
 		authPublicKey:          d.AuthPublicKey,
+		authorizedDigests:      d.AuthorizedDigests,
 		pcrPolicyCounterHandle: d.PCRPolicyCounterHandle}
 }
 
@@ -157,6 +160,7 @@ func (d *staticPolicyDataRaw_v1) data() *staticPolicyData {
 func makeStaticPolicyDataRaw_v1(data *staticPolicyData) *staticPolicyDataRaw_v1 {
 	return &staticPolicyDataRaw_v1{
 		AuthPublicKey:          data.authPublicKey,
+		AuthorizedDigests:      data.authorizedDigests,
 		PCRPolicyCounterHandle: data.pcrPolicyCounterHandle}
 }
 
@@ -714,6 +718,12 @@ func computePcrPolicyRefFromCounterContext(context tpm2.ResourceContext) tpm2.No
 	return computePcrPolicyRefFromCounterName(name)
 }
 
+func computeRecoveryPolicyRef() tpm2.Nonce {
+	h := tpm2.HashAlgorithmSHA256.NewHash()
+	h.Write([]byte("AUTH-RECOVERY-POLICY"))
+	return h.Sum(nil)
+}
+
 // computeStaticPolicy computes the part of an authorization policy that is bound to a sealed key object and never changes. The
 // static policy asserts that the following are true:
 // - The signed PCR policy created by computePcrPolicy is valid and has been satisfied (by way of a PolicyAuthorize assertion,
@@ -739,13 +749,24 @@ func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputePar
 		}
 	}
 
+	var authorizedDigests tpm2.DigestList
+
 	trial, _ := tpm2.ComputeAuthPolicy(alg)
 	trial.PolicyAuthorize(computePcrPolicyRefFromCounterName(pcrPolicyCounterName), keyName)
+	authorizedDigests = append(authorizedDigests, trial.GetDigest())
+
+	trial, _ = tpm2.ComputeAuthPolicy(alg)
+	trial.PolicyAuthorize(computeRecoveryPolicyRef(), keyName)
+	authorizedDigests = append(authorizedDigests, trial.GetDigest())
+
+	trial, _ = tpm2.ComputeAuthPolicy(alg)
+	trial.PolicyOR(authorizedDigests)
 	trial.PolicyAuthValue()
 	trial.PolicyNV(input.lockIndexName, nil, 0, tpm2.OpEq)
 
 	return &staticPolicyData{
 		authPublicKey:          input.key,
+		authorizedDigests:      authorizedDigests,
 		pcrPolicyCounterHandle: pcrPolicyCounterHandle}, trial.GetDigest(), nil
 }
 
@@ -977,9 +998,8 @@ func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession
 	authorizeTicket, err := tpm.VerifySignature(authorizeKey, h.Sum(nil), authorizedPolicy.signature)
 	if err != nil {
 		if tpm2.IsTPMParameterError(err, tpm2.AnyErrorCode, tpm2.CommandVerifySignature, 2) {
-			// authorizedPolicy.signature or authorizedPolicy.ref is invalid.
-			// XXX: It's not possible to determine whether this is broken dynamic or static metadata -
-			//  we should just do away with the distinction here tbh
+			// authorizedPolicy.signature, authorizedPolicy.ref or authorizeKey is invalid. Assume it is the former
+			// for now (SealedKeyObject.Validate can detect the others).
 			return policyDataError{errors.New("cannot verify PCR policy signature")}
 		}
 		return xerrors.Errorf("cannot verify PCR policy signature: %w", err)
@@ -987,13 +1007,14 @@ func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession
 
 	if err := tpm.PolicyAuthorize(policySession, authorizedPolicy.policy, authorizedPolicy.ref, authorizeKey.Name(), authorizeTicket); err != nil {
 		if tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyAuthorize, 1) {
-			// pcrInput.AuthorizedPolicy is invalid.
+			// authorizedPolicy.policy is invalid.
 			return policyDataError{errors.New("the PCR policy is invalid")}
 		}
 		return xerrors.Errorf("PCR policy check failed: %w", err)
 	}
 
-	if version == 0 {
+	switch version {
+	case 0:
 		// For metadata version 0, PIN support is implemented by asserting knowlege of the authorization value
 		// for the PCR policy counter.
 		pinIndexHandle := d.pcrPolicyCounterHandle
@@ -1012,7 +1033,17 @@ func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession
 		if _, _, err := tpm.PolicySecret(pinIndex, policySession, nil, nil, 0, hmacSession); err != nil {
 			return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 		}
-	} else {
+	default:
+		if err := tpm.PolicyOR(policySession, d.authorizedDigests); err != nil {
+			switch {
+			case tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyOR, 1):
+				// Either authorizedPolicy.ref, d.authorizedDigests or authorizeKey is invalid
+				return keyDataError{errors.New("cannot complete OR assertion for authorized policy: current session digest is invalid")}
+			default:
+				return xerrors.Errorf("cannot complete OR assertion for authorized policy: %w", err)
+			}
+		}
+
 		// For metadata versions > 0, PIN support is implemented by requiring knowlege of the authorization value for
 		// the sealed key object when this policy session is used to unseal it.
 		if err := tpm.PolicyAuthValue(policySession); err != nil {

@@ -511,7 +511,17 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, authKey crypto.PrivateKey, sess
 	if d.version == 0 {
 		trial.PolicySecret(pcrPolicyCounter.Name(), nil)
 	} else {
-		// v1 metadata and later
+		// v1 metadata and later uses the sealed key object for PIN integration and can
+		// authorize 2 dynamic policies - a PCR policy and a recovery policy.
+		var authorizedDigests tpm2.DigestList
+		authorizedDigests = append(authorizedDigests, trial.GetDigest())
+
+		trial, _ = tpm2.ComputeAuthPolicy(keyPublic.NameAlg)
+		trial.PolicyAuthorize(computeRecoveryPolicyRef(), authKeyName)
+		authorizedDigests = append(authorizedDigests, trial.GetDigest())
+
+		trial, _ = tpm2.ComputeAuthPolicy(keyPublic.NameAlg)
+		trial.PolicyOR(authorizedDigests)
 		trial.PolicyAuthValue()
 	}
 	trial.PolicyNV(lockIndexName, nil, 0, tpm2.OpEq)
