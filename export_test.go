@@ -96,8 +96,8 @@ func (d *PcrPolicyData) AuthorizedPolicySignature() *tpm2.Signature {
 	return d.authorizedPolicySignature
 }
 
-func (d *PcrPolicyData) ExecuteAssertions(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, staticData *StaticPolicyData, pin string, hmacSession tpm2.SessionContext) error {
-	return d.executeAssertions(tpm, policySession, version, staticData, pin, hmacSession)
+func (d *PcrPolicyData) Execute(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, staticData *StaticPolicyData, pin string, hmacSession tpm2.SessionContext) error {
+	return d.execute(tpm, policySession, version, staticData, pin, hmacSession)
 }
 
 type EFISignatureData efiSignatureData

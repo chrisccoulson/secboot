@@ -247,22 +247,24 @@ type keyDataRaw_v0 struct {
 
 // keyDataRaw_v1 is version 1 of the on-disk format of keyDataRaw.
 type keyDataRaw_v1 struct {
-	KeyPrivate       tpm2.Private
-	KeyPublic        *tpm2.Public
-	AuthModeHint     AuthMode
-	StaticPolicyData *staticPolicyDataRaw_v1
-	PCRPolicyData    *pcrPolicyDataRaw_v0
+	KeyPrivate         tpm2.Private
+	KeyPublic          *tpm2.Public
+	AuthModeHint       AuthMode
+	StaticPolicyData   *staticPolicyDataRaw_v1
+	PCRPolicyData      *pcrPolicyDataRaw_v0
+	RecoveryPolicyData *recoveryPolicyDataRaw_v1 `tpm2:"sized"`
 }
 
 // keyData corresponds to the part of a sealed key object that contains the TPM sealed object and associated metadata required
 // for executing authorization policy assertions.
 type keyData struct {
-	version          uint32
-	keyPrivate       tpm2.Private
-	keyPublic        *tpm2.Public
-	authModeHint     AuthMode
-	staticPolicyData *staticPolicyData
-	pcrPolicyData    *pcrPolicyData
+	version            uint32
+	keyPrivate         tpm2.Private
+	keyPublic          *tpm2.Public
+	authModeHint       AuthMode
+	staticPolicyData   *staticPolicyData
+	pcrPolicyData      *pcrPolicyData
+	recoveryPolicyData *recoveryPolicyData
 }
 
 func (d *keyData) Marshal(w io.Writer) (nbytes int, err error) {
@@ -285,11 +287,12 @@ func (d *keyData) Marshal(w io.Writer) (nbytes int, err error) {
 	case 1:
 		var tmpW bytes.Buffer
 		raw := keyDataRaw_v1{
-			KeyPrivate:       d.keyPrivate,
-			KeyPublic:        d.keyPublic,
-			AuthModeHint:     d.authModeHint,
-			StaticPolicyData: makeStaticPolicyDataRaw_v1(d.staticPolicyData),
-			PCRPolicyData:    makePcrPolicyDataRaw_v0(d.pcrPolicyData)}
+			KeyPrivate:         d.keyPrivate,
+			KeyPublic:          d.keyPublic,
+			AuthModeHint:       d.authModeHint,
+			StaticPolicyData:   makeStaticPolicyDataRaw_v1(d.staticPolicyData),
+			PCRPolicyData:      makePcrPolicyDataRaw_v0(d.pcrPolicyData),
+			RecoveryPolicyData: makeRecoveryPolicyDataRaw_v1(d.recoveryPolicyData)}
 		if _, err := tpm2.MarshalToWriter(&tmpW, raw); err != nil {
 			return 0, xerrors.Errorf("cannot marshal data: %w", err)
 		}
@@ -345,12 +348,13 @@ func (d *keyData) Unmarshal(r io.Reader) (nbytes int, err error) {
 			return nbytes, xerrors.Errorf("cannot unmarshal data: %w", err)
 		}
 		*d = keyData{
-			version:          version,
-			keyPrivate:       raw.KeyPrivate,
-			keyPublic:        raw.KeyPublic,
-			authModeHint:     raw.AuthModeHint,
-			staticPolicyData: raw.StaticPolicyData.data(),
-			pcrPolicyData:    raw.PCRPolicyData.data()}
+			version:            version,
+			keyPrivate:         raw.KeyPrivate,
+			keyPublic:          raw.KeyPublic,
+			authModeHint:       raw.AuthModeHint,
+			staticPolicyData:   raw.StaticPolicyData.data(),
+			pcrPolicyData:      raw.PCRPolicyData.data(),
+			recoveryPolicyData: raw.RecoveryPolicyData.data()}
 	default:
 		return nbytes, fmt.Errorf("unexpected version number (%d)", version)
 	}
@@ -510,7 +514,9 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, authKey crypto.PrivateKey, sess
 	trial.PolicyAuthorize(pcrPolicyRef, authKeyName)
 	if d.version == 0 {
 		trial.PolicySecret(pcrPolicyCounter.Name(), nil)
-	} else {
+	}
+	trial.PolicyNV(lockIndexName, nil, 0, tpm2.OpEq)
+	if d.version > 0 {
 		// v1 metadata and later uses the sealed key object for PIN integration and can
 		// authorize 2 dynamic policies - a PCR policy and a recovery policy.
 		var authorizedDigests tpm2.DigestList
@@ -524,7 +530,6 @@ func (d *keyData) validate(tpm *tpm2.TPMContext, authKey crypto.PrivateKey, sess
 		trial.PolicyOR(authorizedDigests)
 		trial.PolicyAuthValue()
 	}
-	trial.PolicyNV(lockIndexName, nil, 0, tpm2.OpEq)
 
 	if !bytes.Equal(trial.GetDigest(), keyPublic.AuthPolicy) {
 		return nil, keyDataError{errors.New("the sealed key object's authorization policy is inconsistent with the associated metadata or persistent TPM resources")}

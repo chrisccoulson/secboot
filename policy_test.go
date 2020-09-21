@@ -542,18 +542,18 @@ AwEHoUQDQgAEkxoOhf6oe3ZE91Kl97qMH/WndK1B0gD7nuqXzPnwtxBBWhTF6pbw
 			desc:                "SHA256",
 			alg:                 tpm2.HashAlgorithmSHA256,
 			pcrPolicyCounterPub: pcrPolicyCounterPub,
-			policy:              decodeHexStringT(t, "5f6401faddae88a697faab3285f45e223ca4c771981af81718c131322b77f070"),
+			policy:              decodeHexStringT(t, "f24ea79a1eda9000f03a68e8c6705e8144292ce69a9a329e6b848f27422b208b"),
 		},
 		{
 			desc:                "SHA1",
 			alg:                 tpm2.HashAlgorithmSHA1,
 			pcrPolicyCounterPub: pcrPolicyCounterPub,
-			policy:              decodeHexStringT(t, "915d9b80566318c25155ebf05d90e8aeadc16c14"),
+			policy:              decodeHexStringT(t, "d480370795c6e0ad68d7ba695f587464c0cd7532"),
 		},
 		{
 			desc:   "NoPolicyCounter",
 			alg:    tpm2.HashAlgorithmSHA256,
-			policy: decodeHexStringT(t, "236c148cc673ebe3ac4c9210bb96d503a1a0b8865227bee074f39b9fc15ae53f"),
+			policy: decodeHexStringT(t, "fd5527bbbfc5ae2af0f88558809b20f89302a6a678982ba73db7d9cc59bac20e"),
 		},
 	} {
 		t.Run(data.desc, func(t *testing.T) {
@@ -1243,7 +1243,7 @@ func TestExecutePolicy(t *testing.T) {
 		}
 		defer flushContext(t, tpm, session)
 
-		policyErr := dynamicPolicyData.ExecuteAssertions(tpm.TPMContext, session, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
+		policyErr := dynamicPolicyData.Execute(tpm.TPMContext, session, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
 		digest, err := tpm.PolicyGetDigest(session)
 		if err != nil {
 			t.Errorf("PolicyGetDigest failed: %v", err)
@@ -2469,7 +2469,7 @@ func TestLockAccessToSealedKeys(t *testing.T) {
 			}
 			defer flushContext(t, tpm, policySession)
 
-			err = dynamicPolicyData.ExecuteAssertions(tpm.TPMContext, policySession, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
+			err = dynamicPolicyData.Execute(tpm.TPMContext, policySession, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
 			if err != nil {
 				t.Errorf("ExecutePolicySession failed: %v", err)
 			}
@@ -2491,7 +2491,7 @@ func TestLockAccessToSealedKeys(t *testing.T) {
 				t.Errorf("PolicyRestart failed: %v", err)
 			}
 
-			err = dynamicPolicyData.ExecuteAssertions(tpm.TPMContext, policySession, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
+			err = dynamicPolicyData.Execute(tpm.TPMContext, policySession, CurrentMetadataVersion, staticPolicyData, "", tpm.HmacSession())
 			if !tpm2.IsTPMError(err, tpm2.ErrorNVLocked, tpm2.CommandPolicyNV) {
 				t.Errorf("Unexpected error: %v", err)
 			}

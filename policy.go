@@ -104,6 +104,44 @@ func makePcrPolicyDataRaw_v0(data *pcrPolicyData) *pcrPolicyDataRaw_v0 {
 		AuthorizedPolicySignature: data.authorizedPolicySignature}
 }
 
+type recoveryPolicyComputeParams struct {
+	key          *ecdsa.PrivateKey
+	signAlg      tpm2.HashAlgorithmId
+	recoveryKeys []*tpm2.Public
+}
+
+type recoveryPolicyData struct {
+	orData                    policyOrDataTree
+	authorizedPolicy          tpm2.Digest
+	authorizedPolicySignature *tpm2.Signature
+}
+
+type recoveryPolicyDataRaw_v1 struct {
+	OrData                    policyOrDataTree
+	AuthorizedPolicy          tpm2.Digest
+	AuthorizedPolicySignature *tpm2.Signature
+}
+
+func (d *recoveryPolicyDataRaw_v1) data() *recoveryPolicyData {
+	if d == nil {
+		return nil
+	}
+	return &recoveryPolicyData{
+		orData:                    d.OrData,
+		authorizedPolicy:          d.AuthorizedPolicy,
+		authorizedPolicySignature: d.AuthorizedPolicySignature}
+}
+
+func makeRecoveryPolicyDataRaw_v1(data *recoveryPolicyData) *recoveryPolicyDataRaw_v1 {
+	if data == nil {
+		return nil
+	}
+	return &recoveryPolicyDataRaw_v1{
+		OrData:                    data.orData,
+		AuthorizedPolicy:          data.authorizedPolicy,
+		AuthorizedPolicySignature: data.authorizedPolicySignature}
+}
+
 // staticPolicyComputeParams provides the parameters to computeStaticPolicy.
 type staticPolicyComputeParams struct {
 	key                 *tpm2.Public   // Public part of key used to authorize a dynamic authorization policy
@@ -753,6 +791,7 @@ func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputePar
 
 	trial, _ := tpm2.ComputeAuthPolicy(alg)
 	trial.PolicyAuthorize(computePcrPolicyRefFromCounterName(pcrPolicyCounterName), keyName)
+	trial.PolicyNV(input.lockIndexName, nil, 0, tpm2.OpEq)
 	authorizedDigests = append(authorizedDigests, trial.GetDigest())
 
 	trial, _ = tpm2.ComputeAuthPolicy(alg)
@@ -762,7 +801,6 @@ func computeStaticPolicy(alg tpm2.HashAlgorithmId, input *staticPolicyComputePar
 	trial, _ = tpm2.ComputeAuthPolicy(alg)
 	trial.PolicyOR(authorizedDigests)
 	trial.PolicyAuthValue()
-	trial.PolicyNV(input.lockIndexName, nil, 0, tpm2.OpEq)
 
 	return &staticPolicyData{
 		authPublicKey:          input.key,
@@ -907,6 +945,49 @@ func computePcrPolicy(version uint32, alg tpm2.HashAlgorithmId, input *pcrPolicy
 		authorizedPolicySignature: &signature}, nil
 }
 
+func computeRecoveryPolicy(alg tpm2.HashAlgorithmId, input *recoveryPolicyComputeParams) (*recoveryPolicyData, error) {
+	var orDigests tpm2.DigestList
+	for _, k := range input.recoveryKeys {
+		name, err := k.Name()
+		if err != nil {
+			return nil, xerrors.Errorf("cannot compute name of key: %w", err)
+		}
+		trial, _ := tpm2.ComputeAuthPolicy(alg)
+		trial.PolicySigned(name, nil)
+		orDigests = append(orDigests, trial.GetDigest())
+	}
+
+	trial, _ := tpm2.ComputeAuthPolicy(alg)
+	orData := computePolicyORData(alg, trial, orDigests)
+
+	authorizedPolicy := trial.GetDigest()
+
+	// Create a digest to sign
+	h := input.signAlg.NewHash()
+	h.Write(authorizedPolicy)
+	h.Write(computeRecoveryPolicyRef())
+
+	// Sign the digest
+	var signature tpm2.Signature
+	sigR, sigS, err := ecdsa.Sign(rand.Reader, input.key, h.Sum(nil))
+	if err != nil {
+		return nil, xerrors.Errorf("cannot provide signature for authorizing policy: %w", err)
+	}
+
+	signature = tpm2.Signature{
+		SigAlg: tpm2.SigSchemeAlgECDSA,
+		Signature: tpm2.SignatureU{
+			Data: &tpm2.SignatureECDSA{
+				Hash:       input.signAlg,
+				SignatureR: sigR.Bytes(),
+				SignatureS: sigS.Bytes()}}}
+
+	return &recoveryPolicyData{
+		orData:                    orData,
+		authorizedPolicy:          authorizedPolicy,
+		authorizedPolicySignature: &signature}, nil
+}
+
 type policyDataError struct {
 	err error
 }
@@ -924,9 +1005,9 @@ func isPolicyDataError(err error) bool {
 	return xerrors.As(err, &e)
 }
 
-// executeAssertions takes the data produced by computePolicyORData and executes a sequence of TPM2_PolicyOR assertions, in
+// execute takes the data produced by computePolicyORData and executes a sequence of TPM2_PolicyOR assertions, in
 // order to support compound policies with more than 8 conditions.
-func (data policyOrDataTree) executeAssertions(tpm *tpm2.TPMContext, session tpm2.SessionContext) error {
+func (data policyOrDataTree) execute(tpm *tpm2.TPMContext, session tpm2.SessionContext) error {
 	// First of all, obtain the current digest of the session.
 	currentDigest, err := tpm.PolicyGetDigest(session)
 	if err != nil {
@@ -973,10 +1054,11 @@ func (data policyOrDataTree) executeAssertions(tpm *tpm2.TPMContext, session tpm
 type authorizedPolicy struct {
 	policy    tpm2.Digest
 	ref       tpm2.Nonce
+	name      string
 	signature *tpm2.Signature
 }
 
-func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, authorizedPolicy *authorizedPolicy, pin string, hmacSession tpm2.SessionContext) error {
+func (d *staticPolicyData) authorizeDynamic(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, authorizedPolicy *authorizedPolicy) error {
 	authPublicKey := d.authPublicKey
 	if !authPublicKey.NameAlg.Supported() {
 		return keyDataError{errors.New("public area of dynamic authorization policy signing key has an unsupported name algorithm")}
@@ -1000,21 +1082,55 @@ func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession
 		if tpm2.IsTPMParameterError(err, tpm2.AnyErrorCode, tpm2.CommandVerifySignature, 2) {
 			// authorizedPolicy.signature, authorizedPolicy.ref or authorizeKey is invalid. Assume it is the former
 			// for now (SealedKeyObject.Validate can detect the others).
-			return policyDataError{errors.New("cannot verify PCR policy signature")}
+			return policyDataError{fmt.Errorf("cannot verify %s policy signature", authorizedPolicy.name)}
 		}
-		return xerrors.Errorf("cannot verify PCR policy signature: %w", err)
+		return xerrors.Errorf("cannot verify %s policy signature: %w", authorizedPolicy.name, err)
 	}
 
 	if err := tpm.PolicyAuthorize(policySession, authorizedPolicy.policy, authorizedPolicy.ref, authorizeKey.Name(), authorizeTicket); err != nil {
 		if tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyAuthorize, 1) {
 			// authorizedPolicy.policy is invalid.
-			return policyDataError{errors.New("the PCR policy is invalid")}
+			return policyDataError{fmt.Errorf("the %s policy is invalid", authorizedPolicy.name)}
 		}
-		return xerrors.Errorf("PCR policy check failed: %w", err)
+		return xerrors.Errorf("%s policy check failed: %w", authorizedPolicy.name, err)
 	}
 
-	switch version {
-	case 0:
+	return nil
+}
+
+func (d *staticPolicyData) executeCommon(tpm *tpm2.TPMContext, policySession tpm2.SessionContext) error {
+	if err := tpm.PolicyOR(policySession, d.authorizedDigests); err != nil {
+		switch {
+		case tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyOR, 1):
+			return keyDataError{errors.New("cannot complete OR assertion for authorized policy: current session digest is invalid")}
+		default:
+			return xerrors.Errorf("cannot complete OR assertion for authorized policy: %w", err)
+		}
+	}
+
+	// For metadata versions > 0, PIN support is implemented by requiring knowlege of the authorization value for
+	// the sealed key object when this policy session is used to unseal it.
+	if err := tpm.PolicyAuthValue(policySession); err != nil {
+		return xerrors.Errorf("cannot execute PolicyAuthValue assertion: %w", err)
+	}
+
+	return nil
+}
+
+func (d *staticPolicyData) executeNonLockable(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, authorizedPolicy *authorizedPolicy) error {
+	if err := d.authorizeDynamic(tpm, policySession, authorizedPolicy); err != nil {
+		return err
+	}
+
+	return d.executeCommon(tpm, policySession)
+}
+
+func (d *staticPolicyData) executeLockable(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, authorizedPolicy *authorizedPolicy, pin string, hmacSession tpm2.SessionContext) error {
+	if err := d.authorizeDynamic(tpm, policySession, authorizedPolicy); err != nil {
+		return err
+	}
+
+	if version == 0 {
 		// For metadata version 0, PIN support is implemented by asserting knowlege of the authorization value
 		// for the PCR policy counter.
 		pinIndexHandle := d.pcrPolicyCounterHandle
@@ -1033,22 +1149,6 @@ func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession
 		if _, _, err := tpm.PolicySecret(pinIndex, policySession, nil, nil, 0, hmacSession); err != nil {
 			return xerrors.Errorf("cannot execute PolicySecret assertion: %w", err)
 		}
-	default:
-		if err := tpm.PolicyOR(policySession, d.authorizedDigests); err != nil {
-			switch {
-			case tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyOR, 1):
-				// Either authorizedPolicy.ref, d.authorizedDigests or authorizeKey is invalid
-				return keyDataError{errors.New("cannot complete OR assertion for authorized policy: current session digest is invalid")}
-			default:
-				return xerrors.Errorf("cannot complete OR assertion for authorized policy: %w", err)
-			}
-		}
-
-		// For metadata versions > 0, PIN support is implemented by requiring knowlege of the authorization value for
-		// the sealed key object when this policy session is used to unseal it.
-		if err := tpm.PolicyAuthValue(policySession); err != nil {
-			return xerrors.Errorf("cannot execute PolicyAuthValue assertion: %w", err)
-		}
 	}
 
 	lockIndex, err := tpm.CreateResourceContextFromTPM(lockNVHandle)
@@ -1059,15 +1159,19 @@ func (d *staticPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession
 		return xerrors.Errorf("policy lock check failed: %w", err)
 	}
 
-	return nil
+	if version == 0 {
+		return nil
+	}
+
+	return d.executeCommon(tpm, policySession)
 }
 
-func (d *pcrPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, staticData *staticPolicyData, pin string, hmacSession tpm2.SessionContext) error {
+func (d *pcrPolicyData) execute(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, version uint32, staticData *staticPolicyData, pin string, hmacSession tpm2.SessionContext) error {
 	if err := tpm.PolicyPCR(policySession, nil, d.pcrs); err != nil {
 		return xerrors.Errorf("cannot execute PCR assertion: %w", err)
 	}
 
-	if err := d.orData.executeAssertions(tpm, policySession); err != nil {
+	if err := d.orData.execute(tpm, policySession); err != nil {
 		switch {
 		case tpm2.IsTPMError(err, tpm2.AnyErrorCode, tpm2.CommandPolicyGetDigest):
 			return xerrors.Errorf("cannot execute OR assertions: %w", err)
@@ -1148,7 +1252,33 @@ func (d *pcrPolicyData) executeAssertions(tpm *tpm2.TPMContext, policySession tp
 		policyRef = computePcrPolicyRefFromCounterContext(policyCounter)
 	}
 
-	return staticData.executeAssertions(tpm, policySession, version, &authorizedPolicy{policy: d.authorizedPolicy, ref: policyRef, signature: d.authorizedPolicySignature}, pin, hmacSession)
+	return staticData.executeLockable(tpm, policySession, version, &authorizedPolicy{policy: d.authorizedPolicy, ref: policyRef, name: "PCR", signature: d.authorizedPolicySignature}, pin, hmacSession)
+}
+
+func (d *recoveryPolicyData) execute(tpm *tpm2.TPMContext, policySession tpm2.SessionContext, staticData *staticPolicyData, publicKey *tpm2.Public, signature *tpm2.Signature) error {
+	key, err := tpm.LoadExternal(nil, publicKey, tpm2.HandleOwner)
+	if err != nil {
+		return xerrors.Errorf("cannot load public area of recovery signing key: %w", err)
+	}
+	defer tpm.FlushContext(key)
+
+	if _, _, err := tpm.PolicySigned(key, policySession, true, nil, nil, 0, signature); err != nil {
+		return xerrors.Errorf("cannot execute assertion: %w", err)
+	}
+
+	if err := d.orData.execute(tpm, policySession); err != nil {
+		switch {
+		case tpm2.IsTPMError(err, tpm2.AnyErrorCode, tpm2.CommandPolicyGetDigest):
+			return xerrors.Errorf("cannot execute OR assertions: %w", err)
+		case tpm2.IsTPMParameterError(err, tpm2.ErrorValue, tpm2.CommandPolicyOR, 1):
+			// The tree of policy digests is invalid
+			return policyDataError{errors.New("cannot complete OR assertions for recovery policy: invalid metadata")}
+		}
+		// The tree of policy digests doesn't contain an entry for the current digest
+		return policyDataError{xerrors.Errorf("cannot complete OR assertions for recovery policy: %w", err)}
+	}
+
+	return staticData.executeNonLockable(tpm, policySession, &authorizedPolicy{policy: d.authorizedPolicy, ref: computeRecoveryPolicyRef(), name: "recovery", signature: d.authorizedPolicySignature})
 }
 
 // executePcrPolicySession executes a PCR authorization policy session using the supplied metadata. On success, the supplied policy

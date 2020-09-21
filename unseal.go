@@ -66,57 +66,37 @@ import (
 // On success, the unsealed cleartext key is returned as the first return value, and the private part of the key used for
 // authorizing PCR policy updates with UpdateKeyPCRProtectionPolicy is returned as the second return value.
 func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string) (key []byte, authKey TPMPolicyAuthKey, err error) {
-	// Use the HMAC session created when the connection was opened for parameter encryption rather than creating a new one.
-	hmacSession := tpm.HmacSession()
-
-	// Load the key data
-	keyObject, err := k.data.load(tpm.TPMContext, hmacSession)
-	switch {
-	case tpm2.IsResourceUnavailableError(err, tcg.SRKHandle):
-		return nil, nil, ErrTPMProvisioning
-	case xerrors.Is(err, errInvalidTPMSealedObject):
-		return nil, nil, InvalidKeyDataError{RetryProvision: true, msg: err.Error()}
-	case err != nil:
-		return nil, nil, xerrors.Errorf("cannot load sealed key in to TPM: %w", err)
-	}
-	defer tpm.FlushContext(keyObject)
-
-	// Begin and execute policy session
-	policySession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, k.data.keyPublic.NameAlg)
+	c, err := k.BeginUnsealFromTPM(tpm)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("cannot start policy session: %w", err)
-	}
-	defer tpm.FlushContext(policySession)
-
-	if err := k.data.pcrPolicyData.executeAssertions(tpm.TPMContext, policySession, k.data.version, k.data.staticPolicyData, pin, hmacSession); err != nil {
-		err = xerrors.Errorf("cannot complete authorization policy assertions: %w", err)
-		switch {
-		case isKeyDataError(err):
-			return nil, nil, InvalidKeyDataError{RetryProvision: false, msg: err.Error()}
-		case isPolicyDataError(err):
-			return nil, nil, InvalidPolicyDataError(err.Error())
-		case isAuthFailError(err, tpm2.CommandPolicySecret, 1):
-			return nil, nil, ErrPINFail
-		case tpm2.IsTPMWarning(err, tpm2.WarningLockout, tpm2.CommandPolicySecret):
-			return nil, nil, ErrTPMLockout
-		case tpm2.IsResourceUnavailableError(err, k.data.staticPolicyData.pcrPolicyCounterHandle):
-			return nil, nil, InvalidKeyDataError{RetryProvision: false, msg: "no PCR policy counter found"}
-		case tpm2.IsResourceUnavailableError(err, lockNVHandle):
-			// This is technically a provisioning error, but the current index can't be recreated. This key
-			// can never be recovered even after re-provisioning.
-			return nil, nil, InvalidKeyDataError{RetryProvision: false, msg: "a required NV index is missing from the TPM"}
-		case tpm2.IsTPMError(err, tpm2.ErrorNVLocked, tpm2.CommandPolicyNV):
-			return nil, nil, ErrSealedKeyAccessLocked
-		}
 		return nil, nil, err
 	}
 
+	return c.UnsealWithPCRPolicy(pin)
+}
+
+type UnsealFromTPMContext struct {
+	tpm           *TPMConnection
+	data          *keyData
+	key           tpm2.ResourceContext
+	policySession tpm2.SessionContext
+}
+
+func (c *UnsealFromTPMContext) FlushContexts() {
+	c.tpm.FlushContext(c.key)
+	c.tpm.FlushContext(c.policySession)
+}
+
+func (c *UnsealFromTPMContext) NonceTPM() tpm2.Nonce {
+	return c.policySession.NonceTPM()
+}
+
+func (c *UnsealFromTPMContext) unseal(pin string) ([]byte, TPMPolicyAuthKey, error) {
 	// For metadata version > 0, the PIN is the auth value for the sealed key object, and the authorization
 	// policy asserts that this value is known when the policy session is used.
-	keyObject.SetAuthValue([]byte(pin))
+	c.key.SetAuthValue([]byte(pin))
 
 	// Unseal
-	keyData, err := tpm.Unseal(keyObject, policySession, hmacSession.IncludeAttrs(tpm2.AttrResponseEncrypt))
+	keyData, err := c.tpm.Unseal(c.key, c.policySession, c.tpm.HmacSession().IncludeAttrs(tpm2.AttrResponseEncrypt))
 	switch {
 	case tpm2.IsTPMSessionError(err, tpm2.ErrorPolicyFail, tpm2.CommandUnseal, 1):
 		// We could get here if some of the metadata required to execute the policy session is invalid
@@ -131,7 +111,7 @@ func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string) (key []b
 		return nil, nil, xerrors.Errorf("cannot unseal key: %w", err)
 	}
 
-	if k.data.version == 0 {
+	if c.data.version == 0 {
 		return keyData, nil, nil
 	}
 
@@ -141,4 +121,79 @@ func (k *SealedKeyObject) UnsealFromTPM(tpm *TPMConnection, pin string) (key []b
 	}
 
 	return sealedData.Key, sealedData.AuthPrivateKey, nil
+}
+
+func (c *UnsealFromTPMContext) UnsealWithPCRPolicy(pin string) ([]byte, TPMPolicyAuthKey, error) {
+	defer c.FlushContexts()
+
+	if err := c.data.pcrPolicyData.execute(c.tpm.TPMContext, c.policySession, c.data.version, c.data.staticPolicyData, pin, c.tpm.HmacSession()); err != nil {
+		err = xerrors.Errorf("cannot complete authorization policy assertions: %w", err)
+		switch {
+		case isKeyDataError(err):
+			return nil, nil, InvalidKeyDataError{RetryProvision: false, msg: err.Error()}
+		case isPolicyDataError(err):
+			return nil, nil, InvalidPolicyDataError(err.Error())
+		case isAuthFailError(err, tpm2.CommandPolicySecret, 1):
+			return nil, nil, ErrPINFail
+		case tpm2.IsTPMWarning(err, tpm2.WarningLockout, tpm2.CommandPolicySecret):
+			return nil, nil, ErrTPMLockout
+		case tpm2.IsResourceUnavailableError(err, c.data.staticPolicyData.pcrPolicyCounterHandle):
+			return nil, nil, InvalidKeyDataError{RetryProvision: false, msg: "no PCR policy counter found"}
+		case tpm2.IsResourceUnavailableError(err, lockNVHandle):
+			// This is technically a provisioning error, but the current index can't be recreated. This key
+			// can never be recovered even after re-provisioning.
+			return nil, nil, InvalidKeyDataError{RetryProvision: false, msg: "a required NV index is missing from the TPM"}
+		case tpm2.IsTPMError(err, tpm2.ErrorNVLocked, tpm2.CommandPolicyNV):
+			return nil, nil, ErrSealedKeyAccessLocked
+		}
+		return nil, nil, err
+	}
+
+	return c.unseal(pin)
+}
+
+func (c *UnsealFromTPMContext) UnsealWithRecoveryAuth(publicKey *tpm2.Public, signature *tpm2.Signature, pin string) ([]byte, TPMPolicyAuthKey, error) {
+	defer c.FlushContexts()
+
+	if c.data.recoveryPolicyData == nil {
+		return nil, nil, InvalidKeyDataError{RetryProvision: false, msg: "no recovery policy data"}
+	}
+
+	if err := c.data.recoveryPolicyData.execute(c.tpm.TPMContext, c.policySession, c.data.staticPolicyData, publicKey, signature); err != nil {
+		err = xerrors.Errorf("cannot complete authorization policy assertions: %w", err)
+		switch {
+		case isKeyDataError(err):
+			return nil, nil, InvalidKeyDataError{RetryProvision: false, msg: err.Error()}
+		case isPolicyDataError(err):
+			return nil, nil, InvalidPolicyDataError(err.Error())
+		}
+		return nil, nil, err
+	}
+
+	return c.unseal(pin)
+}
+
+func (k *SealedKeyObject) BeginUnsealFromTPM(tpm *TPMConnection) (*UnsealFromTPMContext, error) {
+	// Load the key data
+	keyObject, err := k.data.load(tpm.TPMContext, tpm.HmacSession())
+	switch {
+	case tpm2.IsResourceUnavailableError(err, tcg.SRKHandle):
+		return nil, ErrTPMProvisioning
+	case xerrors.Is(err, errInvalidTPMSealedObject):
+		return nil, InvalidKeyDataError{RetryProvision: true, msg: err.Error()}
+	case err != nil:
+		return nil, xerrors.Errorf("cannot load sealed key in to TPM: %w", err)
+	}
+
+	// Begin and execute policy session
+	policySession, err := tpm.StartAuthSession(nil, nil, tpm2.SessionTypePolicy, nil, k.data.keyPublic.NameAlg)
+	if err != nil {
+		return nil, xerrors.Errorf("cannot start policy session: %w", err)
+	}
+
+	return &UnsealFromTPMContext{
+		tpm:           tpm,
+		data:          k.data,
+		key:           keyObject,
+		policySession: policySession}, nil
 }

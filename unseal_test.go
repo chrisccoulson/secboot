@@ -351,7 +351,8 @@ func TestUnsealErrorHandling(t *testing.T) {
 			}
 		})
 		if _, ok := err.(InvalidKeyDataError); !ok || err.(InvalidKeyDataError).RetryProvision ||
-			err.Error() != "invalid key data: the authorization policy check failed during unsealing" {
+			err.Error() != "invalid key data: cannot complete authorization policy assertions: cannot complete OR assertion for authorized "+
+				"policy: current session digest is invalid" {
 			t.Errorf("Unexpected error: %v", err)
 		}
 	})
