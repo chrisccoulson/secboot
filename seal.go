@@ -394,3 +394,38 @@ func UpdateKeyPCRProtectionPolicyV0(tpm *TPMConnection, keyPath, policyUpdatePat
 func UpdateKeyPCRProtectionPolicy(tpm *TPMConnection, keyPath string, authKey TPMPolicyAuthKey, pcrProfile *PCRProtectionProfile) error {
 	return updateKeyPCRProtectionPolicyCommon(tpm.TPMContext, keyPath, authKey, pcrProfile, tpm.HmacSession())
 }
+
+func UpdateKeyRecoveryAuthKeys(tpm *TPMConnection, keyPath string, authKey TPMPolicyAuthKey, keys []*tpm2.Public) error {
+	keyFile, err := os.Open(keyPath)
+	if err != nil {
+		return xerrors.Errorf("cannot open key data file: %w", err)
+	}
+	defer keyFile.Close()
+
+	data, goAuthKey, _, err := decodeAndValidateKeyData(tpm.TPMContext, keyFile, authKey, tpm.HmacSession())
+	switch {
+	case xerrors.Is(err, errInvalidTPMSealedObject):
+		return InvalidKeyDataError{RetryProvision: true, msg: err.Error()}
+	case isKeyDataError(err):
+		return InvalidKeyDataError{RetryProvision: false, msg: err.Error()}
+	case err != nil:
+		return xerrors.Errorf("cannot read and validate key data file: %w", err)
+	}
+
+	policyData, err := computeRecoveryPolicy(data.keyPublic.NameAlg, &recoveryPolicyComputeParams{
+		key:          goAuthKey.(*ecdsa.PrivateKey),
+		signAlg:      data.staticPolicyData.authPublicKey.NameAlg,
+		recoveryKeys: keys})
+	if err != nil {
+		return xerrors.Errorf("cannot compute recovery policy: %w", err)
+	}
+
+	// Atomically update the key data file
+	data.recoveryPolicyData = policyData
+
+	if err := data.writeToFileAtomic(keyPath); err != nil {
+		return xerrors.Errorf("cannot write key data file: %v", err)
+	}
+
+	return nil
+}

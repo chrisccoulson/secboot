@@ -116,7 +116,7 @@ func isTPMVerificationError(err error) bool {
 // InvalidKeyDataError indicates that the provided key data is invalid.
 type InvalidKeyDataError struct {
 	RetryProvision bool // a hint that the error might be resolved by calling ProvisionTPM
-	msg  string
+	msg            string
 }
 
 func (e InvalidKeyDataError) Error() string {
