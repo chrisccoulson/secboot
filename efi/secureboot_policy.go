@@ -38,7 +38,6 @@ import (
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/tcglog-parser"
 	"github.com/snapcore/secboot"
-	internal_efi "github.com/snapcore/secboot/internal/efi"
 	"github.com/snapcore/secboot/internal/pe1.14"
 	"github.com/snapcore/snapd/osutil"
 
@@ -70,6 +69,8 @@ var (
 	efiImageSecurityDatabaseGuid = efi.MakeGUID(0xd719b2cb, 0x3d3a, 0x4596, 0xa3bc, [...]uint8{0xda, 0xd0, 0x0e, 0x67, 0x65, 0x6f}) // EFI_IMAGE_SECURITY_DATABASE_GUID
 
 	oidSha256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
+
+	efiVarsPath = "/sys/firmware/efi/efivars" // Default mount point for efivarfs
 )
 
 // readShimVendorCert obtains the DER encoded built-in vendor certificate from the shim executable accessed via r.
@@ -225,7 +226,7 @@ func buildSignatureDbUpdateList(keystores []string) ([]*secureBootDbUpdate, erro
 		return nil, xerrors.Errorf("lookup failed %s: %w", sbKeySyncExe, err)
 	}
 
-	args := []string{"--dry-run", "--verbose", "--no-default-keystores", "--efivars-path", internal_efi.EFIVarsPath}
+	args := []string{"--dry-run", "--verbose", "--no-default-keystores", "--efivars-path", efiVarsPath}
 	for _, ks := range keystores {
 		args = append(args, "--keystore", ks)
 	}
@@ -321,6 +322,11 @@ type SecureBootPolicyProfileParams struct {
 	// SignatureDbUpdateKeystores is a list of directories containing EFI signature database updates for which to compute PCR digests
 	// for. These directories are passed to sbkeysync using the --keystore option.
 	SignatureDbUpdateKeystores []string
+
+	// Environment is an optional parameter that allows the caller to provide
+	// a custom EFI environment. If not set, the host's normal environment will
+	// be used
+	Environment HostEnvironment
 }
 
 // secureBootDb corresponds to a EFI signature database.
@@ -351,6 +357,7 @@ type authenticodeSignerAndIntermediates struct {
 // a container for SecureBootPolicyProfileParams - per-branch context is maintained in secureBootPolicyGenBranch instead.
 type secureBootPolicyGen struct {
 	pcrAlgorithm  tpm2.HashAlgorithmId
+	env           HostEnvironment
 	loadSequences []*ImageLoadEvent
 
 	events       []*tcglog.Event
@@ -435,7 +442,7 @@ func (b *secureBootPolicyGenBranch) computeAndExtendVariableMeasurement(varName 
 // processSignatureDbMeasurementEvent computes a EFI signature database measurement for the specified database and with the supplied
 // updates, and then extends that in to this branch.
 func (b *secureBootPolicyGenBranch) processSignatureDbMeasurementEvent(guid efi.GUID, name string, updates []*secureBootDbUpdate, updateQuirkMode sigDbUpdateQuirkMode) ([]byte, error) {
-	db, _, err := internal_efi.ReadVar(name, guid)
+	db, _, err := b.gen.env.ReadVar(name, guid)
 	if err != nil && err != efi.ErrVariableNotFound {
 		return nil, xerrors.Errorf("cannot read current variable: %w", err)
 	}
@@ -1020,12 +1027,13 @@ func (g *secureBootPolicyGen) run(profile *secboot.PCRProtectionProfile, sigDbUp
 // load event sequence corresponds to loads of images that are all verified with the same chain of trust, this is a complicated way of
 // adding a single PCR digest to the provided secboot.PCRProtectionProfile.
 func AddSecureBootPolicyProfile(profile *secboot.PCRProtectionProfile, params *SecureBootPolicyProfileParams) error {
-	// Load event log
-	eventLog, err := os.Open(internal_efi.EventLogPath)
-	if err != nil {
-		return xerrors.Errorf("cannot open TCG event log: %w", err)
+	env := params.Environment
+	if env == nil {
+		env = defaultEnv
 	}
-	log, err := tcglog.ParseLog(eventLog, &tcglog.LogOptions{})
+
+	// Load event log
+	log, err := env.ReadEventLog()
 	if err != nil {
 		return xerrors.Errorf("cannot parse TCG event log: %w", err)
 	}
@@ -1085,7 +1093,7 @@ func AddSecureBootPolicyProfile(profile *secboot.PCRProtectionProfile, params *S
 		return xerrors.Errorf("cannot build list of UEFI signature DB updates: %w", err)
 	}
 
-	gen := &secureBootPolicyGen{params.PCRAlgorithm, params.LoadSequences, log.Events, sigDbUpdates}
+	gen := &secureBootPolicyGen{params.PCRAlgorithm, env, params.LoadSequences, log.Events, sigDbUpdates}
 
 	profile1 := secboot.NewPCRProtectionProfile()
 	if err := gen.run(profile1, sigDbUpdateQuirkModeNone); err != nil {
