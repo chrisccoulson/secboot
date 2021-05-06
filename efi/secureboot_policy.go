@@ -457,16 +457,34 @@ func (b *secureBootPolicyGenBranch) processSignatureDbMeasurementEvent(guid efi.
 		return nil, xerrors.Errorf("cannot read current variable: %w", err)
 	}
 
+	hasUpdates := false
 	for _, u := range updates {
 		if u.db != name {
 			continue
 		}
+		hasUpdates = true
 		if f, err := os.Open(u.path); err != nil {
 			return nil, xerrors.Errorf("cannot open signature DB update: %w", err)
 		} else if d, err := computeDbUpdate(bytes.NewReader(db), f, updateQuirkMode); err != nil {
 			return nil, xerrors.Errorf("cannot compute signature DB update for %s: %w", u.path, err)
 		} else {
 			db = d
+		}
+	}
+
+	if !hasUpdates && err == efi.ErrVariableNotFound {
+		// Whether an unset variable ends up in the log depends on which variable it is.
+		switch {
+		case guid == efiGlobalVariableGuid:
+			// PK and KEK are always measured, even if not set (although we
+			// shouldn't get here if PK isn't set).
+		case guid == efiImageSecurityDatabaseGuid && name == dbName:
+			// Always measured, even if not set.
+		case guid == efiImageSecurityDatabaseGuid && name == dbxName:
+			// Always measured, even if not set.
+		default:
+			// No event measured if not set
+			return db, nil
 		}
 	}
 
