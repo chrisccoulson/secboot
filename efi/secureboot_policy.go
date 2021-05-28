@@ -47,12 +47,12 @@ import (
 )
 
 const (
-	pkName      = "PK"  // Unicode variable name for the EFI platform key
-	kekName     = "KEK" // Unicode variable name for the EFI KEK database
-	dbName      = "db"  // Unicode variable name for the EFI authorized signature database
-	dbxName     = "dbx" // Unicode variable name for the EFI forbidden signature database
-	dbtName     = "dbt"
-	dbrName     = "dbr"
+	pkName      = "PK"         // Unicode variable name for the EFI platform key
+	kekName     = "KEK"        // Unicode variable name for the EFI KEK database
+	dbName      = "db"         // Unicode variable name for the EFI authorized signature database
+	dbxName     = "dbx"        // Unicode variable name for the EFI forbidden signature database
+	dbtName     = "dbt"        // Unicode variable name for the EFI authorized timestamp signature database
+	dbrName     = "dbr"        // Unicode variable name for the EFI authorized recovery signature database
 	sbStateName = "SecureBoot" // Unicode variable name for the EFI secure boot configuration (enabled/disabled)
 
 	mokListName    = "MokList"    // Unicode variable name for the shim MOK database
