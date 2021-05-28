@@ -492,7 +492,7 @@ func (b *secureBootPolicyGenBranch) processSignatureDatabaseMeasurementEvents(up
 		return xerrors.Errorf("cannot process PK measurement event: %w", err)
 	}
 	if _, err := b.processSignatureDatabaseMeasurementEvent(efi.GlobalVariable, kekName, updates, updateQuirkMode, true); err != nil {
-		return xerrors.Errorf("cannot process PK measurement event: %w", err)
+		return xerrors.Errorf("cannot process KEK measurement event: %w", err)
 	}
 
 	if err := b.processDbMeasurementEvent(updates, updateQuirkMode); err != nil {
@@ -503,10 +503,10 @@ func (b *secureBootPolicyGenBranch) processSignatureDatabaseMeasurementEvents(up
 	}
 
 	if _, err := b.processSignatureDatabaseMeasurementEvent(efi.ImageSecurityDatabaseGuid, dbtName, updates, updateQuirkMode, false); err != nil {
-		return xerrors.Errorf("cannot process dbx measurement event: %w", err)
+		return xerrors.Errorf("cannot process dbt measurement event: %w", err)
 	}
 	if _, err := b.processSignatureDatabaseMeasurementEvent(efi.ImageSecurityDatabaseGuid, dbrName, updates, updateQuirkMode, false); err != nil {
-		return xerrors.Errorf("cannot process dbx measurement event: %w", err)
+		return xerrors.Errorf("cannot process dbr measurement event: %w", err)
 	}
 
 	return nil
