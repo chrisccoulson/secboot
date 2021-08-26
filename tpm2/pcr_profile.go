@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/go-tpm2/util"
@@ -96,8 +97,9 @@ type pcrProtectionProfileBranchPointInstr struct {
 	branches []*PCRProtectionProfile
 }
 
-// pcrProtectionProfileEndBranchInstr is a pseudo instruction to mark the end of a branch.
-type pcrProtectionProfileEndBranchInstr struct{}
+type pcrProtectionProfileResumeBranchInstr struct{}
+
+type pcrProtectionProfileBeginBranchInstr struct{}
 
 type PCRProtectionProfileBranchPoint struct {
 	parent *PCRProtectionProfile
@@ -244,219 +246,238 @@ func (p *PCRProtectionProfileBranchPoint) EndBranchPoint() *PCRProtectionProfile
 	return p.parent
 }
 
-// pcrProtectionProfileIterator provides a mechanism to perform a depth first
-// traversal of instructions in a PCRProtectionProfile.
-type pcrProtectionProfileIterator struct {
-	instrs []pcrProtectionProfileInstrList
+// pcrProfileBranchVisitor is an interface to receive instructions associated
+// with a branch.
+type pcrProfileBranchVisitor interface {
+	// beginBranch is called before the first instruction in this branch.
+	beginBranch()
+
+	// addPCRValue is called to add the supplied PCR value to this branch.
+	addPCRValue(alg tpm2.HashAlgorithmId, pcr int, value tpm2.Digest)
+
+	// addPCRValueFromTPM is called to add the value of the specified
+	// PCR to this branch,
+	addPCRValueFromTPM(alg tpm2.HashAlgorithmId, pcr int) error
+
+	// extendPCR is called to extend the specified PCR with the supplied
+	// value for this branch.
+	extendPCR(alg tpm2.HashAlgorithmId, pcr int, value tpm2.Digest)
+
+	// branchPoint signals that this branch branches into n number of
+	// sub-branches at this point. The implementation returns visitors
+	// for each of the sub-branches. Traversal will continue into each
+	// of the sub-branches before continuing with the current branch.
+	branchPoint(n int) []pcrProfileBranchVisitor
+
+	// resumeBranch signals that the processing of sub-branches for
+	// the current branch point has completed.
+	resumeBranch()
+
+	// endBranch signals the end of this branch.
+	endBranch()
 }
 
-// descendInToProfiles adds instructions from the supplied profiles to the front
-// of the iterator, so that subsequent calls to next will return instructions from
-// each of these profiles in turn.
-func (iter *pcrProtectionProfileIterator) descendInToBranches(branches ...*PCRProtectionProfile) {
-	var instrs []pcrProtectionProfileInstrList
-	for _, b := range branches {
-		instrs = append(instrs, b.instrs)
-	}
-	instrs = append(instrs, iter.instrs...)
-	iter.instrs = instrs
+type pcrProfileTraverseBranchContext struct {
+	instrs  pcrProtectionProfileInstrList
+	visitor pcrProfileBranchVisitor
 }
 
-// next returns the next instruction from this iterator. When encountering a
-// branch point, a *pcrProtectionProfileBranchPointInstr will be returned, which
-// indicates the number of branches from the branch point. Subsequent calls to
-// next will return instructions from each of these branches in turn, with each
-// branch terminating with *pcrProtectionProfileEndBranchInstr. Once all branches
-// have been processed, subsequent calls to next will resume returning instructions
-// from the parent branch.
-func (iter *pcrProtectionProfileIterator) next() pcrProtectionProfileInstr {
-	if len(iter.instrs) == 0 {
-		panic("no more instructions")
-	}
+// pcrProfileTraverseContext is used for the traversal of a PCRProtectionProfile.
+type pcrProfileTraverseContext struct {
+	branches []*pcrProfileTraverseBranchContext
+}
 
-	for {
-		if len(iter.instrs[0]) == 0 {
-			iter.instrs = iter.instrs[1:]
-			return &pcrProtectionProfileEndBranchInstr{}
+func (c *pcrProfileTraverseContext) run() error {
+	for len(c.branches) > 0 {
+		// Pick the current branch
+		currentBranch := c.branches[0]
+		visitor := currentBranch.visitor
+
+		if len(currentBranch.instrs) == 0 {
+			// This branch is finished - move to the next one
+			visitor.endBranch()
+			c.branches = c.branches[1:]
+			continue
 		}
 
-		instr := iter.instrs[0][0]
-		iter.instrs[0] = iter.instrs[0][1:]
+		// Pick the next instruction for this branch
+		instr := currentBranch.instrs[0]
+		currentBranch.instrs = currentBranch.instrs[1:]
 
 		switch i := instr.(type) {
-		case *pcrProtectionProfileBranchPointInstr:
-			if len(i.branches) == 0 {
-				// If this is an empty branch point, don't return this instruction because there
-				// won't be a corresponding *EndBranchInstr
-				continue
+		case *pcrProtectionProfileBeginBranchInstr:
+			visitor.beginBranch()
+		case *pcrProtectionProfileAddPCRValueInstr:
+			visitor.addPCRValue(i.alg, i.pcr, i.value)
+		case *pcrProtectionProfileAddPCRValueFromTPMInstr:
+			if err := visitor.addPCRValueFromTPM(i.alg, i.pcr); err != nil {
+				return err
 			}
-			iter.descendInToBranches(i.branches...)
-			return instr
-		default:
-			return instr
+		case *pcrProtectionProfileExtendPCRInstr:
+			visitor.extendPCR(i.alg, i.pcr, i.value)
+		case *pcrProtectionProfileBranchPointInstr:
+			visitors := visitor.branchPoint(len(i.branches))
+
+			// Prepend a resumeBranch instruction to the current branch that
+			// will be executed once we have finished processing sub-branches
+			currentBranch.instrs = append(pcrProtectionProfileInstrList{&pcrProtectionProfileResumeBranchInstr{}},
+				currentBranch.instrs...)
+
+			var newBranches []*pcrProfileTraverseBranchContext
+			for j := range i.branches {
+				newBranches = append(newBranches,
+					&pcrProfileTraverseBranchContext{
+						instrs: append(pcrProtectionProfileInstrList{&pcrProtectionProfileBeginBranchInstr{}},
+							i.branches[j].instrs...),
+						visitor: visitors[j]})
+			}
+			// Prepend the sub-branches to the list of branches to process - the
+			// first sub-branch becomes the current branch
+			c.branches = append(newBranches, c.branches...)
+		case *pcrProtectionProfileResumeBranchInstr:
+			// We've finsished processing all sub-branches for a branch
+			// point and are resuming the parent branch
+			visitor.resumeBranch()
 		}
 	}
+
+	return nil
 }
 
-// traverseInstructions returns an iterator that performs a depth first traversal
-// through the instructions in this profile.
-func (p *PCRProtectionProfile) traverseInstructions() *pcrProtectionProfileIterator {
-	i := &pcrProtectionProfileIterator{}
-	i.descendInToBranches(p)
-	return i
+func (p *PCRProtectionProfile) traverseInstructions(visitor pcrProfileBranchVisitor) error {
+	c := &pcrProfileTraverseContext{
+		branches: []*pcrProfileTraverseBranchContext{
+			&pcrProfileTraverseBranchContext{
+				instrs: append(pcrProtectionProfileInstrList{&pcrProtectionProfileBeginBranchInstr{}},
+					p.instrs...),
+				visitor: visitor}}}
+	return c.run()
 }
 
-type pcrProtectionProfileStringifyBranchContext struct {
+type pcrProfileBranchStringVisitor struct {
+	w     io.Writer
+	depth int
 	index int
-	total int
+}
+
+func (v *pcrProfileBranchStringVisitor) beginBranch() {
+	if v.depth == 0 {
+		return
+	}
+	fmt.Fprintf(v.w, "\n%*sBranch %d {", v.depth*3, "", v.index)
+}
+
+func (v *pcrProfileBranchStringVisitor) addPCRValue(alg tpm2.HashAlgorithmId, pcr int, value tpm2.Digest) {
+	fmt.Fprintf(v.w, "\n%*s AddPCRValue(%v, %d, %x)", v.depth*3, "", alg, pcr, value)
+}
+
+func (v *pcrProfileBranchStringVisitor) addPCRValueFromTPM(alg tpm2.HashAlgorithmId, pcr int) error {
+	fmt.Fprintf(v.w, "\n%*s AddPCRValueFromTPM(%v, %d)", v.depth*3, "", alg, pcr)
+	return nil
+}
+
+func (v *pcrProfileBranchStringVisitor) extendPCR(alg tpm2.HashAlgorithmId, pcr int, value tpm2.Digest) {
+	fmt.Fprintf(v.w, "\n%*s ExtendPCR(%v, %d, %x)", v.depth*3, "", alg, pcr, value)
+}
+
+func (v *pcrProfileBranchStringVisitor) branchPoint(n int) (out []pcrProfileBranchVisitor) {
+	fmt.Fprintf(v.w, "\n%*s BranchPoint(", v.depth*3, "")
+	for i := 0; i < n; i++ {
+		out = append(out, &pcrProfileBranchStringVisitor{w: v.w, depth: v.depth + 1, index: i})
+	}
+	return out
+}
+
+func (v *pcrProfileBranchStringVisitor) resumeBranch() {
+	fmt.Fprintf(v.w, "\n%*s )", v.depth*3, "")
+}
+
+func (v *pcrProfileBranchStringVisitor) endBranch() {
+	if v.depth == 0 {
+		return
+	}
+	fmt.Fprintf(v.w, "\n%*s}", v.depth*3, "")
 }
 
 func (p *PCRProtectionProfile) String() string {
-	var b bytes.Buffer
+	s := new(bytes.Buffer)
+	p.traverseInstructions(&pcrProfileBranchStringVisitor{w: s})
+	return s.String() + "\n"
+}
 
-	contexts := []*pcrProtectionProfileStringifyBranchContext{{index: 0, total: 1}}
-	branchStart := false
+type pcrProfileBranchComputeVisitor struct {
+	tpm                *tpm2.TPMContext
+	values             pcrValuesList
+	currentBranchPoint []*pcrProfileBranchComputeVisitor
+}
 
-	iter := p.traverseInstructions()
-	for len(contexts) > 0 {
-		fmt.Fprintf(&b, "\n")
-		depth := len(contexts) - 1
-		if branchStart {
-			branchStart = false
-			fmt.Fprintf(&b, "%*sBranch %d {\n", depth*3, "", contexts[0].index)
-		}
+func (v *pcrProfileBranchComputeVisitor) beginBranch() {}
 
-		switch i := iter.next().(type) {
-		case *pcrProtectionProfileAddPCRValueInstr:
-			fmt.Fprintf(&b, "%*s AddPCRValue(%v, %d, %x)", depth*3, "", i.alg, i.pcr, i.value)
-		case *pcrProtectionProfileAddPCRValueFromTPMInstr:
-			fmt.Fprintf(&b, "%*s AddPCRValueFromTPM(%v, %d)", depth*3, "", i.alg, i.pcr)
-		case *pcrProtectionProfileExtendPCRInstr:
-			fmt.Fprintf(&b, "%*s ExtendPCR(%v, %d, %x)", depth*3, "", i.alg, i.pcr, i.value)
-		case *pcrProtectionProfileBranchPointInstr:
-			contexts = append([]*pcrProtectionProfileStringifyBranchContext{{index: 0, total: len(i.branches)}}, contexts...)
-			fmt.Fprintf(&b, "%*s BranchPoint(", depth*3, "")
-			branchStart = true
-		case *pcrProtectionProfileEndBranchInstr:
-			contexts[0].index++
-			if len(contexts) > 1 {
-				// This is the end of a sub-branch rather than the root profile.
-				fmt.Fprintf(&b, "%*s}", depth*3, "")
-			}
-			switch {
-			case contexts[0].index < contexts[0].total:
-				// There are sibling branches to print.
-				branchStart = true
-			case len(contexts) > 1:
-				// This is the end of a branch point. Printing will continue with the parent branch.
-				fmt.Fprintf(&b, "\n%*s )", (depth-1)*3, "")
-				fallthrough
-			default:
-				// Return to the parent branch's context.
-				contexts = contexts[1:]
-			}
-		}
+func (v *pcrProfileBranchComputeVisitor) addPCRValue(alg tpm2.HashAlgorithmId, pcr int, value tpm2.Digest) {
+	v.values.setValue(alg, pcr, value)
+}
+
+func (v *pcrProfileBranchComputeVisitor) addPCRValueFromTPM(alg tpm2.HashAlgorithmId, pcr int) error {
+	if v.tpm == nil {
+		return fmt.Errorf("cannot read current value of PCR %d from bank %v: no TPM context", pcr, alg)
 	}
-
-	return b.String()
+	_, values, err := v.tpm.PCRRead(tpm2.PCRSelectionList{{Hash: alg, Select: []int{pcr}}})
+	if err != nil {
+		return xerrors.Errorf("cannot read current value of PCR %d from bank %v: %w", pcr, alg, err)
+	}
+	v.values.setValue(alg, pcr, values[alg][pcr])
+	return nil
 }
 
-// pcrProtectionProfileComputeContext records state used when computing PCR
-// values for a PCRProtectionProfile
-type pcrProtectionProfileComputeContext struct {
-	parent *pcrProtectionProfileComputeContext
-	values pcrValuesList
+func (v *pcrProfileBranchComputeVisitor) extendPCR(alg tpm2.HashAlgorithmId, pcr int, value tpm2.Digest) {
+	v.values.extendValue(alg, pcr, value)
 }
 
-// handleBranches is called when encountering a branch in a profile, and
-// returns a slice of new *pcrProtectionProfileComputeContext instances (one
-// for each sub-branch). At the end of each sub-branch, finishBranch must be
-// called on the associated *pcrProtectionProfileComputeContext.
-func (c *pcrProtectionProfileComputeContext) handleBranches(n int) (out []*pcrProtectionProfileComputeContext) {
-	out = make([]*pcrProtectionProfileComputeContext, 0, n)
+func (v *pcrProfileBranchComputeVisitor) branchPoint(n int) (out []pcrProfileBranchVisitor) {
+	// When we encounter a branch point, we take a snapshot of the current context and
+	// copy it to each sub-branch for it to be modified.
 	for i := 0; i < n; i++ {
-		out = append(out, &pcrProtectionProfileComputeContext{parent: c, values: c.values.copy()})
+		branch := &pcrProfileBranchComputeVisitor{tpm: v.tpm, values: v.values.copy()}
+		v.currentBranchPoint = append(v.currentBranchPoint, branch)
+		out = append(out, branch)
 	}
-	c.values = nil
-	return
+	return out
 }
 
-// finishBranch is called when encountering the end of a branch. This propagates the computed PCR values to the
-// *pcrProtectionProfileComputeContext associated with the parent branch. Calling this will panic on a
-// *pcrProtectionProfileComputeContext associated with the root branch.
-func (c *pcrProtectionProfileComputeContext) finishBranch() {
-	c.parent.values = append(c.parent.values, c.values...)
+func (v *pcrProfileBranchComputeVisitor) resumeBranch() {
+	// When we resume a branch after executing sub-branches, we clear our own context
+	// and then set it to the concatenation of the context associated with every
+	// sub-branch, which originally inherited our own context.
+	if len(v.currentBranchPoint) == 0 {
+		// This was an empty branch point.
+		return
+	}
+
+	v.values = nil
+	for _, branch := range v.currentBranchPoint {
+		v.values = append(v.values, branch.values...)
+	}
+
+	v.currentBranchPoint = nil
 }
 
-// isRoot returns true if this *pcrProtectionProfileComputeContext is associated with a root branch.
-func (c *pcrProtectionProfileComputeContext) isRoot() bool {
-	return c.parent == nil
-}
+func (v *pcrProfileBranchComputeVisitor) endBranch() {}
 
-// pcrProtectionProfileComputeContextStack is a stack of *pcrProtectionProfileComputeContext, with the top of the stack associated
-// with the profile branch from which instructions are currently being processed.
-type pcrProtectionProfileComputeContextStack []*pcrProtectionProfileComputeContext
-
-// handleBranches is called when encountering a branch in a profile, and returns a new pcrProtectionProfileComputeContextStack with
-// the top of the stack associated with the first sub-branch, from which subsequent instructions will be processed from. At the
-// end of each sub-branch, finishBranch must be called.
-func (s pcrProtectionProfileComputeContextStack) handleBranches(n int) pcrProtectionProfileComputeContextStack {
-	newContexts := s.top().handleBranches(n)
-	return pcrProtectionProfileComputeContextStack(append(newContexts, s...))
-}
-
-// finishBranch is called when encountering the end of a branch. This propagates the computed PCR values from the
-// *pcrProtectionProfileComputeContext at the top of the stack to the *pcrProtectionProfileComputeContext associated with the parent
-// branch, and then pops the context from the top of the stack. The new top of the stack corresponds to either a sibling branch or
-// the parent branch, from which subsequent instructions will be processed from.
-func (s pcrProtectionProfileComputeContextStack) finishBranch() pcrProtectionProfileComputeContextStack {
-	s.top().finishBranch()
-	return s[1:]
-}
-
-// top returns the *pcrProtectionProfileComputeContext at the top of the stack, which is associated with the branch that instructions
-// are currently being processed from.
-func (s pcrProtectionProfileComputeContextStack) top() *pcrProtectionProfileComputeContext {
-	return s[0]
-}
-
-// ComputePCRValues computes PCR values for this PCRProtectionProfile, returning one set of PCR values
-// for each complete branch. The returned list of PCR values is not de-duplicated.
+// ComputePCRValues computes PCR values for this PCRProtectionProfile, returning one
+// set of PCR values for each complete branch. The returned list of PCR values is not
+// de-duplicated.
 func (p *PCRProtectionProfile) ComputePCRValues(tpm *tpm2.TPMContext) ([]tpm2.PCRValues, error) {
-	contexts := pcrProtectionProfileComputeContextStack{{values: pcrValuesList{make(tpm2.PCRValues)}}}
-
-	iter := p.traverseInstructions()
-	for {
-		switch i := iter.next().(type) {
-		case *pcrProtectionProfileAddPCRValueInstr:
-			contexts.top().values.setValue(i.alg, i.pcr, i.value)
-		case *pcrProtectionProfileAddPCRValueFromTPMInstr:
-			if tpm == nil {
-				return nil, fmt.Errorf("cannot read current value of PCR %d from bank %v: no TPM context", i.pcr, i.alg)
-			}
-			_, v, err := tpm.PCRRead(tpm2.PCRSelectionList{{Hash: i.alg, Select: []int{i.pcr}}})
-			if err != nil {
-				return nil, xerrors.Errorf("cannot read current value of PCR %d from bank %v: %w", i.pcr, i.alg, err)
-			}
-			contexts.top().values.setValue(i.alg, i.pcr, v[i.alg][i.pcr])
-		case *pcrProtectionProfileExtendPCRInstr:
-			contexts.top().values.extendValue(i.alg, i.pcr, i.value)
-		case *pcrProtectionProfileBranchPointInstr:
-			// As this is a depth-first traversal, processing of this branch is parked when a BranchPoint instruction is encountered.
-			// Subsequent instructions will be from each of the branches from this branch point in turn.
-			contexts = contexts.handleBranches(len(i.branches))
-		case *pcrProtectionProfileEndBranchInstr:
-			if contexts.top().isRoot() {
-				// This is the end of the profile
-				return []tpm2.PCRValues(contexts.top().values), nil
-			}
-			contexts = contexts.finishBranch()
-		}
+	visitor := &pcrProfileBranchComputeVisitor{tpm: tpm, values: pcrValuesList{make(tpm2.PCRValues)}}
+	if err := p.traverseInstructions(visitor); err != nil {
+		return nil, err
 	}
+
+	return []tpm2.PCRValues(visitor.values), nil
 }
 
-// ComputePCRDigests computes a PCR selection and a list of composite PCR digests from this PCRProtectionProfile (one composite digest per
-// complete branch). The returned list of PCR digests is de-duplicated.
+// ComputePCRDigests computes a PCR selection and a list of composite PCR digests
+// from this PCRProtectionProfile (one composite digest per complete branch). The
+// returned list of PCR digests is de-duplicated.
 func (p *PCRProtectionProfile) ComputePCRDigests(tpm *tpm2.TPMContext, alg tpm2.HashAlgorithmId) (tpm2.PCRSelectionList, tpm2.DigestList, error) {
 	// Compute the sets of PCR values for all branches
 	values, err := p.ComputePCRValues(tpm)
