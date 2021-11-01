@@ -26,7 +26,7 @@ import (
 	"github.com/canonical/tcglog-parser"
 )
 
-var readVar = efi.ReadVar
+var readVar = efi.ReadVariable
 
 type defaultEnvImpl struct{}
 

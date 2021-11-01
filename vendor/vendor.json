@@ -3,42 +3,52 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "A9a2jd+tEQEir5ACIHWPmlfLZSU=",
+			"checksumSHA1": "oUpc6QpyTxKOtd67Yjzogdd2aJw=",
 			"path": "github.com/canonical/go-efilib",
-			"revision": "41435fa545d411ef5f53251d6ea4c894676f7064",
-			"revisionTime": "2021-09-09T10:19:08Z",
-			"version": "main",
-			"versionExact": "main"
+			"revision": "96e3beda39514914a3fe5144ac69903ae3224296",
+			"revisionTime": "2021-09-20T14:36:03Z",
+			"version": "v0.2.0",
+			"versionExact": "v0.2.0"
 		},
 		{
 			"checksumSHA1": "w0EI7UJmvC1OS1fFXdr0CAGIFgY=",
 			"path": "github.com/canonical/go-efilib/internal/ioerr",
-			"revision": "41435fa545d411ef5f53251d6ea4c894676f7064",
-			"revisionTime": "2021-09-09T10:19:08Z",
-			"version": "main",
-			"versionExact": "main"
+			"revision": "96e3beda39514914a3fe5144ac69903ae3224296",
+			"revisionTime": "2021-09-20T14:36:03Z",
+			"version": "v0.2.0",
+			"versionExact": "v0.2.0"
 		},
 		{
 			"checksumSHA1": "32kmrchV6DeWsy/jCE5jg6gYGig=",
 			"path": "github.com/canonical/go-efilib/internal/pe1.14",
-			"revision": "41435fa545d411ef5f53251d6ea4c894676f7064",
-			"revisionTime": "2021-09-09T10:19:08Z",
-			"version": "main",
-			"versionExact": "main"
+			"revision": "96e3beda39514914a3fe5144ac69903ae3224296",
+			"revisionTime": "2021-09-20T14:36:03Z",
+			"version": "v0.2.0",
+			"versionExact": "v0.2.0"
 		},
 		{
-			"checksumSHA1": "/mFS/B1tgxcSJDo79kmAh3CNskU=",
+			"checksumSHA1": "VDE5sy/sULRAii8J4JIEHhiUGWA=",
 			"path": "github.com/canonical/go-efilib/internal/uefi",
-			"revision": "41435fa545d411ef5f53251d6ea4c894676f7064",
-			"revisionTime": "2021-09-09T10:19:08Z",
-			"version": "main",
-			"versionExact": "main"
+			"revision": "96e3beda39514914a3fe5144ac69903ae3224296",
+			"revisionTime": "2021-09-20T14:36:03Z",
+			"version": "v0.2.0",
+			"versionExact": "v0.2.0"
 		},
 		{
-			"checksumSHA1": "UkgvBbNbZnK/2i3iNTD2NtRXoow=",
+			"checksumSHA1": "5SMPpBSP3f+zupAYgPMdZJPCQdc=",
 			"path": "github.com/canonical/go-efilib/internal/unix",
-			"revision": "41435fa545d411ef5f53251d6ea4c894676f7064",
-			"revisionTime": "2021-09-09T10:19:08Z"
+			"revision": "96e3beda39514914a3fe5144ac69903ae3224296",
+			"revisionTime": "2021-09-20T14:36:03Z",
+			"version": "v0.2.0",
+			"versionExact": "v0.2.0"
+		},
+		{
+			"checksumSHA1": "R9jsX60WDTcKp5XNn97mas6ThXw=",
+			"path": "github.com/canonical/go-efilib/mbr",
+			"revision": "96e3beda39514914a3fe5144ac69903ae3224296",
+			"revisionTime": "2021-09-20T14:36:03Z",
+			"version": "v0.2.0",
+			"versionExact": "v0.2.0"
 		},
 		{
 			"checksumSHA1": "5zGeHDBvsYpgEyZ91hgSF0zLxyU=",
