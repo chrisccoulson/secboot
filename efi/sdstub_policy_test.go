@@ -46,7 +46,7 @@ func (s *sdstubPolicySuite) testAddSystemdStubProfile(c *C, data *testAddSystemd
 	if profile == nil {
 		profile = secboot_tpm2.NewPCRProtectionProfile()
 	}
-	expectedPcrs, _, _ := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	expectedPcrs, _, _ := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	expectedPcrs = expectedPcrs.Merge(tpm2.PCRSelectionList{{Hash: data.params.PCRAlgorithm, Select: []int{data.params.PCRIndex}}})
 	var expectedDigests tpm2.DigestList
 	for _, v := range data.values {
@@ -56,7 +56,7 @@ func (s *sdstubPolicySuite) testAddSystemdStubProfile(c *C, data *testAddSystemd
 
 	c.Check(AddSystemdStubProfile(profile, &data.params), IsNil)
 
-	pcrs, digests, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	pcrs, digests, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, IsNil)
 	c.Check(pcrs.Equal(expectedPcrs), Equals, true)
 	c.Check(digests, DeepEquals, expectedDigests)

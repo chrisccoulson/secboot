@@ -55,7 +55,14 @@ func MakePCRValueFromEvents(alg tpm2.HashAlgorithmId, events ...string) tpm2.Dig
 // FormatPCRValuesFromPCRProtectionProfile returns a formatted string of PCR values
 // contained within the supplied PCR profile.
 func FormatPCRValuesFromPCRProtectionProfile(profile *secboot_tpm2.PCRProtectionProfile, tpm *tpm2.TPMContext) string {
-	values, err := profile.ComputePCRValues(tpm)
+	if tpm != nil {
+		var err error
+		profile, err = profile.ResolveFromTPM(tpm)
+		if err != nil {
+			return ""
+		}
+	}
+	values, err := profile.ComputePCRValues()
 	if err != nil {
 		return ""
 	}
@@ -82,13 +89,8 @@ func NewPCRProfileFromCurrentValues(alg tpm2.HashAlgorithmId, pcrs []int) *secbo
 }
 
 func NewResolvedPCRProfileFromCurrentValues(c *C, tpm *tpm2.TPMContext, alg tpm2.HashAlgorithmId, pcrs []int) *secboot_tpm2.PCRProtectionProfile {
-	_, values, err := tpm.PCRRead(tpm2.PCRSelectionList{{Hash: alg, Select: pcrs}})
+	profile := NewPCRProfileFromCurrentValues(alg, pcrs)
+	profile, err := profile.ResolveFromTPM(tpm)
 	c.Assert(err, IsNil)
-
-	out := secboot_tpm2.NewPCRProtectionProfile()
-	root := out.RootBranch()
-	for _, pcr := range pcrs {
-		root.AddPCRValue(alg, pcr, values[alg][pcr])
-	}
-	return out
+	return profile
 }

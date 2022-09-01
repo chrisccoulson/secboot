@@ -69,7 +69,14 @@ func (k *SealedKeyObject) updatePCRProtectionPolicyImpl(tpm *tpm2.TPMContext, ke
 	alg := k.data.Public().NameAlg
 
 	// Compute PCR digests
-	pcrs, pcrDigests, err := profile.ComputePCRDigests(tpm, alg)
+	if tpm != nil {
+		var err error
+		profile, err = profile.ResolveFromTPM(tpm)
+		if err != nil {
+			return xerrors.Errorf("cannot resolve PCR profile from TPM: %w", err)
+		}
+	}
+	pcrs, pcrDigests, err := profile.ComputePCRDigests(alg)
 	if err != nil {
 		return xerrors.Errorf("cannot compute PCR digests from protection profile: %w", err)
 	}

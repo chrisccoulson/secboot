@@ -54,7 +54,7 @@ func (s *pcrProfileSuite) testPCRProtectionProfile(c *C, data *testPCRProtection
 		expectedDigests = append(expectedDigests, d)
 	}
 
-	pcrs, pcrDigests, err := data.profile.ComputePCRDigests(nil, data.alg)
+	pcrs, pcrDigests, err := data.profile.ComputePCRDigests(data.alg)
 	c.Assert(err, IsNil)
 	c.Check(pcrs.Equal(expectedPcrs), testutil.IsTrue)
 	c.Check(pcrDigests, DeepEquals, expectedDigests)
@@ -674,7 +674,7 @@ func (s *pcrProfileSuite) TestModifyCompletedBranchPointFails1(c *C) {
 	c.Check(bp.EndBranchPoint(), Equals, profile.RootBranch())
 	c.Check(bp.AddBranch().AddPCRValue(tpm2.HashAlgorithmSHA256, 0, make([]byte, 32)), NotNil)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot add a branch to a branch point that has already been terminated \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, "\n")
 }
@@ -688,7 +688,7 @@ func (s *pcrProfileSuite) TestModifyCompletedBranchPointFails2(c *C) {
 	c.Check(b.EndBranch(), Equals, bp)
 	c.Check(bp2.AddBranch().AddPCRValue(tpm2.HashAlgorithmSHA256, 0, make([]byte, 32)), NotNil)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot add a branch to a branch point that has already been terminated \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  BranchPoint(
@@ -705,7 +705,7 @@ func (s *pcrProfileSuite) TestModifyCompletedBranchPointFailsRecursiveMany(c *C)
 	c.Check(bp.EndBranchPoint(), Equals, profile.RootBranch())
 	c.Check(bp2.AddBranch().AddPCRValue(tpm2.HashAlgorithmSHA256, 0, make([]byte, 32)), NotNil)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot add a branch to a branch point that has already been terminated \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, "\n")
 }
@@ -717,7 +717,7 @@ func (s *pcrProfileSuite) TestEndCompletedBranchPointFails(c *C) {
 	c.Check(bp.EndBranchPoint(), Equals, profile.RootBranch())
 	c.Check(bp.EndBranchPoint(), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot terminate a branch point more than once \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, "\n")
 }
@@ -729,7 +729,7 @@ func (s *pcrProfileSuite) TestModifyCompletedBranchFails1(c *C) {
 	c.Check(b.EndBranch(), Equals, bp)
 	c.Check(b.AddPCRValue(tpm2.HashAlgorithmSHA256, 0, make([]byte, 32)), Equals, b)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot modify branch that has already been terminated \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  BranchPoint(
@@ -746,7 +746,7 @@ func (s *pcrProfileSuite) TestModifyCompletedBranchFails2(c *C) {
 	c.Check(b.EndBranch(), Equals, bp)
 	c.Check(b.AddBranchPoint().AddBranch(), NotNil)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot modify branch that has already been terminated \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  BranchPoint(
@@ -764,7 +764,7 @@ func (s *pcrProfileSuite) TestModifyCompletedBranchFails3(c *C) {
 	c.Check(bp.EndBranchPoint(), Equals, profile.RootBranch())
 	c.Check(b.AddPCRValue(tpm2.HashAlgorithmSHA256, 0, make([]byte, 32)), Equals, b)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot modify branch that has already been terminated \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, "\n")
 }
@@ -776,7 +776,7 @@ func (s *pcrProfileSuite) TestModifyCompletedBranchFailsRecursiveMany(c *C) {
 	c.Check(bp.EndBranchPoint(), Equals, profile.RootBranch())
 	c.Check(b.AddPCRValue(tpm2.HashAlgorithmSHA256, 0, make([]byte, 32)), Equals, b)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot modify branch that has already been terminated \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, "\n")
 }
@@ -785,7 +785,7 @@ func (s *pcrProfileSuite) TestInvalidAlg1(c *C) {
 	profile := NewPCRProtectionProfile()
 	c.Check(profile.RootBranch().AddPCRValue(tpm2.HashAlgorithmNull, 0, nil), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: invalid digest algorithm \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  AddPCRValue(TPM_ALG_NULL, 0, )
@@ -796,7 +796,7 @@ func (s *pcrProfileSuite) TestInvalidAlg2(c *C) {
 	profile := NewPCRProtectionProfile()
 	c.Check(profile.RootBranch().ExtendPCR(tpm2.HashAlgorithmNull, 0, nil), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: invalid digest algorithm \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  ExtendPCR(TPM_ALG_NULL, 0, )
@@ -807,7 +807,7 @@ func (s *pcrProfileSuite) TestInvalidPCR1(c *C) {
 	profile := NewPCRProtectionProfile()
 	c.Check(profile.RootBranch().AddPCRValue(tpm2.HashAlgorithmSHA256, -1, make([]byte, 32)), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: invalid PCR index \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  AddPCRValue(TPM_ALG_SHA256, -1, 0000000000000000000000000000000000000000000000000000000000000000)
@@ -818,7 +818,7 @@ func (s *pcrProfileSuite) TestInvalidPCR2(c *C) {
 	profile := NewPCRProtectionProfile()
 	c.Check(profile.RootBranch().AddPCRValue(tpm2.HashAlgorithmSHA256, 2048, make([]byte, 32)), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: invalid PCR index \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  AddPCRValue(TPM_ALG_SHA256, 2048, 0000000000000000000000000000000000000000000000000000000000000000)
@@ -829,7 +829,7 @@ func (s *pcrProfileSuite) TestInvalidDigest1(c *C) {
 	profile := NewPCRProtectionProfile()
 	c.Check(profile.RootBranch().AddPCRValue(tpm2.HashAlgorithmSHA256, 1, make([]byte, 20)), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: digest length is inconsistent with specified algorithm \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, "\n")
 }
@@ -838,7 +838,7 @@ func (s *pcrProfileSuite) TestInvalidDigest2(c *C) {
 	profile := NewPCRProtectionProfile()
 	c.Check(profile.RootBranch().ExtendPCR(tpm2.HashAlgorithmSHA256, 1, make([]byte, 20)), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: digest length is inconsistent with specified algorithm \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, "\n")
 }
@@ -849,7 +849,7 @@ func (s *pcrProfileSuite) TestTerminateRootBranchFails(c *C) {
 	c.Check(bp, NotNil)
 	c.Check(bp.EndBranchPoint(), NotNil)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot terminate the root branch \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 }
 
@@ -859,7 +859,7 @@ func (s *pcrProfileSuite) TestLegacyAddProfileORPropagatesErrors1(c *C) {
 	c.Check(subProfile.RootBranch().EndBranch(), NotNil)
 	c.Check(profile.AddProfileOR(subProfile), Equals, profile)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot terminate the root branch \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  BranchPoint(
@@ -873,7 +873,7 @@ func (s *pcrProfileSuite) TestLegacyAddProfileORPropagatesErrors2(c *C) {
 	c.Check(profile.AddProfileOR(subProfile), Equals, profile)
 	c.Check(subProfile.AddPCRValue(tpm2.HashAlgorithmSHA256, 0, make([]byte, 32)), Equals, subProfile)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: cannot modify branch that has already been terminated \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, "\n")
 }
@@ -883,7 +883,7 @@ func (s *pcrProfileSuite) TestMultipleFailures(c *C) {
 	c.Check(profile.RootBranch().AddPCRValue(tpm2.HashAlgorithmNull, 0, nil), Equals, profile.RootBranch())
 	c.Check(profile.RootBranch().EndBranch(), NotNil)
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `cannot compute PCR values because an error occurred when constructing the profile: invalid digest algorithm \(occurred at \/.*\/pcr_profile_test\.go:[[:digit:]]+\)`)
 	c.Check(profile.String(), Equals, `
  AddPCRValue(TPM_ALG_NULL, 0, )
@@ -902,7 +902,7 @@ func (s *pcrProfileSuite) TestUnbalancedBranchesFails(c *C) {
 		EndBranch().
 		EndBranchPoint(), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, ErrorMatches, `not all branches contain values for the same sets of PCRs`)
 }
 
@@ -1058,8 +1058,8 @@ func (s *pcrProfileSuite) TestAddPCRValueFromTPMFailsWithoutTPM(c *C) {
 		AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 7).
 		AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 8), Equals, profile.RootBranch())
 
-	_, _, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
-	c.Check(err, ErrorMatches, `cannot read current PCR values from TPM: no context`)
+	_, _, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
+	c.Check(err, ErrorMatches, `cannot compute PCR values because the profile is not resolved from a TPM`)
 }
 
 type pcrProfileTPMSuite struct {
@@ -1080,7 +1080,11 @@ func (s *pcrProfileTPMSuite) TestAddValueFromTPM(c *C) {
 	c.Assert(err, IsNil)
 
 	p := NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 23)
-	pcrs, digests, err := p.ComputePCRDigests(s.TPM().TPMContext, tpm2.HashAlgorithmSHA256)
+
+	p, err = p.ResolveFromTPM(s.TPM().TPMContext)
+	c.Assert(err, IsNil)
+
+	pcrs, digests, err := p.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, IsNil)
 	c.Check(pcrs.Equal(tpm2.PCRSelectionList{{Hash: tpm2.HashAlgorithmSHA256, Select: []int{23}}}), testutil.IsTrue)
 	c.Check(digests, HasLen, 1)
@@ -1103,7 +1107,10 @@ func (s *pcrProfileTPMSuite) TestAddValueFromTPMAddProfileORPropagatesSelection(
 	p2 := NewPCRProtectionProfile().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA1, 23)
 	p.AddProfileOR(p2)
 
-	pcrs, digests, err := p.ComputePCRDigests(s.TPM().TPMContext, tpm2.HashAlgorithmSHA256)
+	p, err = p.ResolveFromTPM(s.TPM().TPMContext)
+	c.Assert(err, IsNil)
+
+	pcrs, digests, err := p.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	c.Check(err, IsNil)
 	c.Check(pcrs.Equal(tpm2.PCRSelectionList{
 		{Hash: tpm2.HashAlgorithmSHA1, Select: []int{23}},
@@ -1122,6 +1129,6 @@ func (s *pcrProfileTPMSuite) TestAddValueFromTPMInvalidPCR(c *C) {
 	p := NewPCRProtectionProfile()
 	c.Check(p.RootBranch().AddPCRValueFromTPM(tpm2.HashAlgorithmSHA256, 100), Equals, p.RootBranch())
 
-	_, _, err := p.ComputePCRDigests(s.TPM().TPMContext, tpm2.HashAlgorithmSHA256)
+	_, err := p.ResolveFromTPM(s.TPM().TPMContext)
 	c.Check(err, ErrorMatches, `cannot read current PCR values from TPM: TPM returned an error for parameter 1 whilst executing command TPM_CC_PCR_Read: TPM_RC_VALUE \(value is out of range or is not correct for the context\)`)
 }

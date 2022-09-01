@@ -268,7 +268,7 @@ func (s *securebootPolicySuite) testAddSecureBootPolicyProfile(c *C, data *testA
 	if profile == nil {
 		profile = secboot_tpm2.NewPCRProtectionProfile()
 	}
-	expectedPcrs, _, _ := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+	expectedPcrs, _, _ := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 	expectedPcrs = expectedPcrs.Merge(tpm2.PCRSelectionList{{Hash: data.params.PCRAlgorithm, Select: []int{7}}})
 	var expectedDigests tpm2.DigestList
 	for _, v := range data.values {
@@ -282,7 +282,7 @@ func (s *securebootPolicySuite) testAddSecureBootPolicyProfile(c *C, data *testA
 	} else {
 		c.Check(err, IsNil)
 
-		pcrs, digests, err := profile.ComputePCRDigests(nil, tpm2.HashAlgorithmSHA256)
+		pcrs, digests, err := profile.ComputePCRDigests(tpm2.HashAlgorithmSHA256)
 		c.Check(err, IsNil)
 		c.Check(pcrs.Equal(expectedPcrs), Equals, true)
 		c.Check(digests, DeepEquals, expectedDigests)
