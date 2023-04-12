@@ -17,29 +17,23 @@
  *
  */
 
-package efi
+package testutil
 
 import (
-	"bytes"
+	"crypto/rsa"
+	"crypto/x509"
 
-	"github.com/canonical/go-tpm2"
+	. "gopkg.in/check.v1"
 )
 
-// fwContext maintains context associated with the platform firmware for a branch
-type fwContext struct {
-	Db                 *secureBootDB
-	verificationEvents tpm2.DigestList
+func ParseCertificate(c *C, data []byte) *x509.Certificate {
+	cert, err := x509.ParseCertificate(data)
+	c.Assert(err, IsNil)
+	return cert
 }
 
-func (c *fwContext) AppendVerificationEvent(digest tpm2.Digest) {
-	c.verificationEvents = append(c.verificationEvents, digest)
-}
-
-func (c *fwContext) HasVerificationEvent(digest tpm2.Digest) bool {
-	for _, e := range c.verificationEvents {
-		if bytes.Equal(e, digest) {
-			return true
-		}
-	}
-	return false
+func ParsePKCS1PrivateKey(c *C, data []byte) *rsa.PrivateKey {
+	key, err := x509.ParsePKCS1PrivateKey(data)
+	c.Assert(err, IsNil)
+	return key
 }

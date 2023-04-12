@@ -29,24 +29,13 @@ import (
 	efi "github.com/canonical/go-efilib"
 	"github.com/canonical/go-tpm2"
 	. "github.com/snapcore/secboot/efi"
+	"github.com/snapcore/secboot/internal/efitest"
 	"github.com/snapcore/secboot/internal/testutil"
 	secboot_tpm2 "github.com/snapcore/secboot/tpm2"
 )
 
 type pcrImagesMeasurerSuite struct {
-	restoreOpenPeImage func()
-}
-
-func (s *pcrImagesMeasurerSuite) SetUpSuite(c *C) {
-	s.restoreOpenPeImage = MockOpenPeImage(func(image Image) (PeImageHandle, error) {
-		return &mockPeImageHandle{source: image}, nil
-	})
-}
-
-func (s *pcrImagesMeasurerSuite) TearDownSuite(c *C) {
-	if s.restoreOpenPeImage != nil {
-		s.restoreOpenPeImage()
-	}
+	mockImageHandleMixin
 }
 
 var _ = Suite(&pcrImagesMeasurerSuite{})
@@ -56,7 +45,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureOneLeaf(c *C) {
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -68,11 +57,12 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureOneLeaf(c *C) {
 	io.WriteString(h, "bar")
 	digest2 := h.Sum(nil)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1),
 		images[1]: newMockLoadHandler().withExtendPCROnImageStart(1, digest2),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -107,7 +97,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerTwoLeaf(c *C) {
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -119,12 +109,13 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerTwoLeaf(c *C) {
 	io.WriteString(h, "bar")
 	digest2 := h.Sum(nil)
 
-	images := []*mockImage{new(mockImage), new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1, digest2),
 		images[1]: newMockLoadHandler(),
 		images[2]: newMockLoadHandler(),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -161,7 +152,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerNonLeaf(c *C) {
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -173,12 +164,13 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerNonLeaf(c *C) {
 	io.WriteString(h, "bar")
 	digest2 := h.Sum(nil)
 
-	images := []*mockImage{new(mockImage), new(mockImage), new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1),
 		images[1]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest2),
 		images[2]: newMockLoadHandler(),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -220,7 +212,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerTwoNonLeaf(c *C) {
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -236,13 +228,14 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerTwoNonLeaf(c *C) {
 	io.WriteString(h, "bar")
 	digest3 := h.Sum(nil)
 
-	images := []*mockImage{new(mockImage), new(mockImage), new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage(), newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1, digest2),
 		images[1]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest3),
 		images[2]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest3),
 		images[3]: newMockLoadHandler(),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -298,7 +291,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithParams(c *C) {
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -310,7 +303,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithParams(c *C) {
 	io.WriteString(h, "bar")
 	digest2 := h.Sum(nil)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1, digest2),
 		images[1]: newMockLoadHandler().withCheckParamsOnImageStarts(c,
@@ -318,6 +311,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithParams(c *C) {
 			&LoadParams{KernelCommandline: "bar"},
 		),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -362,7 +356,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithInheritedParams
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := &LoadParams{SnapModel: model}
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -374,7 +368,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithInheritedParams
 	io.WriteString(h, "bar")
 	digest2 := h.Sum(nil)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1, digest2),
 		images[1]: newMockLoadHandler().withCheckParamsOnImageStarts(c,
@@ -382,6 +376,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithInheritedParams
 			&LoadParams{KernelCommandline: "bar", SnapModel: model},
 		),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -418,8 +413,8 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithVars(c *C) {
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{
-		{Name: "foo", GUID: testGuid1}: {data: []byte{1}, attrs: efi.AttributeNonVolatile | efi.AttributeBootserviceAccess},
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{
+		{Name: "foo", GUID: testGuid1}: {Payload: []byte{1}, Attrs: efi.AttributeNonVolatile | efi.AttributeBootserviceAccess},
 	}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
@@ -432,13 +427,14 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithVars(c *C) {
 	io.WriteString(h, "bar")
 	digest2 := h.Sum(nil)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1),
 		images[1]: newMockLoadHandler().
 			withExtendPCROnImageStart(1, digest2).
 			withCheckVarOnImageStarts(c, "foo", testGuid1, []byte{1}),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -472,8 +468,8 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureVarsAreCopied
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{
-		{Name: "foo", GUID: testGuid1}: {data: []byte{1}, attrs: efi.AttributeNonVolatile | efi.AttributeBootserviceAccess},
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{
+		{Name: "foo", GUID: testGuid1}: {Payload: []byte{1}, Attrs: efi.AttributeNonVolatile | efi.AttributeBootserviceAccess},
 	}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
@@ -486,7 +482,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureVarsAreCopied
 	io.WriteString(h, "bar")
 	digest2 := h.Sum(nil)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1, digest1),
 		images[1]: newMockLoadHandler().
@@ -494,6 +490,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureVarsAreCopied
 			withCheckVarOnImageStarts(c, "foo", testGuid1, []byte{1}, []byte{1}).
 			withSetVarOnImageStart("foo", testGuid1, efi.AttributeNonVolatile|efi.AttributeBootserviceAccess, []byte{0}),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -531,7 +528,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithFwContext(c *C)
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -545,13 +542,14 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithFwContext(c *C)
 
 	fc.AppendVerificationEvent(digest1)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1),
 		images[1]: newMockLoadHandler().
 			withExtendPCROnImageStart(1, digest2).
 			withCheckFwHasVerificationEventOnImageStart(c, digest1, true),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -585,7 +583,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureFwContextIsCo
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -599,7 +597,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureFwContextIsCo
 
 	fc.AppendVerificationEvent(digest1)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1, digest1),
 		images[1]: newMockLoadHandler().
@@ -608,6 +606,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureFwContextIsCo
 			withCheckFwHasVerificationEventOnImageStart(c, digest2, false).
 			withAppendFwVerificationEventOnImageStart(c, digest2),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -645,7 +644,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithShimContext(c *
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -659,13 +658,14 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureWithShimContext(c *
 
 	sc.AppendVerificationEvent(digest1)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1),
 		images[1]: newMockLoadHandler().
 			withExtendPCROnImageStart(1, digest2).
 			withCheckShimHasVerificationEventOnImageStart(c, digest1, true),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,
@@ -699,7 +699,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureShimContextIs
 	profile := secboot_tpm2.NewPCRProtectionProfile()
 
 	params := new(LoadParams)
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{}, nil)).Next()
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{}, nil)).Next()
 	fc := new(FwContext)
 	sc := new(ShimContext)
 
@@ -713,7 +713,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureShimContextIs
 
 	sc.AppendVerificationEvent(digest1)
 
-	images := []*mockImage{new(mockImage), new(mockImage)}
+	images := []Image{newMockImage(), newMockImage()}
 	handlers := mockImageLoadHandlers{
 		images[0]: newMockLoadHandler().withExtendPCROnImageLoads(0, digest1, digest1),
 		images[1]: newMockLoadHandler().
@@ -722,6 +722,7 @@ func (s *pcrImagesMeasurerSuite) TestPcrImagesMeasurerMeasureEnsureShimContextIs
 			withCheckShimHasVerificationEventOnImageStart(c, digest2, false).
 			withAppendShimVerificationEventOnImageStart(c, digest2),
 	}
+
 	pc := &mockPcrProfileContext{
 		alg:      tpm2.HashAlgorithmSHA256,
 		handlers: handlers,

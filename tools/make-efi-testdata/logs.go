@@ -368,7 +368,7 @@ func constructLog(vars map[string]map[string][]byte, certs map[string][]byte, op
 		data := &tcglog.EFIVariableData{
 			VariableName: efi.MakeGUID(0x605dab50, 0xe046, 0x4300, 0xabb6, [...]uint8{0x3d, 0xd8, 0x10, 0xdd, 0x8b, 0x23}),
 			UnicodeName:  "Shim",
-			VariableData: certs["canonical-uefi-ca"]}
+			VariableData: certs["CanonicalUefiCA"]}
 		w.hashLogExtendEvent(data, &Event{
 			PCRIndex:  7,
 			EventType: tcglog.EventTypeEFIVariableAuthority,

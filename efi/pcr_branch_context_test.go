@@ -31,6 +31,7 @@ import (
 	. "gopkg.in/check.v1"
 
 	. "github.com/snapcore/secboot/efi"
+	"github.com/snapcore/secboot/internal/efitest"
 	"github.com/snapcore/secboot/internal/testutil"
 	secboot_tpm2 "github.com/snapcore/secboot/tpm2"
 )
@@ -61,8 +62,8 @@ func (s *pcrBranchContextSuite) TestPcrBranchContextImplParams(c *C) {
 }
 
 func (s *pcrBranchContextSuite) TestPcrBranchContextImplVars(c *C) {
-	vars := NewRootVarsCollector(newMockEFIEnvironment(map[efi.VariableDescriptor]*mockEFIVar{
-		{Name: "foo", GUID: efi.GlobalVariable}: {data: []byte{1}, attrs: efi.AttributeNonVolatile | efi.AttributeBootserviceAccess},
+	vars := NewRootVarsCollector(efitest.NewMockHostEnvironment(map[efi.VariableDescriptor]*efitest.VarEntry{
+		{Name: "foo", GUID: efi.GlobalVariable}: {Payload: []byte{1}, Attrs: efi.AttributeNonVolatile | efi.AttributeBootserviceAccess},
 	}, nil)).Next()
 	bc := NewPcrBranchContextImpl(&mockPcrProfileContext{alg: tpm2.HashAlgorithmSHA256}, nil, new(LoadParams), vars, new(FwContext), new(ShimContext))
 	c.Assert(bc, NotNil)

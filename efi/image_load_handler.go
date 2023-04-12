@@ -19,6 +19,10 @@
 
 package efi
 
+import (
+	"errors"
+)
+
 // imageLoadHandler is an abstraction for measuring boot events
 // associated with a single image.
 type imageLoadHandler interface {
@@ -42,4 +46,18 @@ type imageLoadHandlers interface {
 // newOrExistingImageLoadHandler returns an imageLoadHandler for the supplied image.
 func newOrExistingImageLoadHandler(pc pcrProfileContext, image peImageHandle) (imageLoadHandler, error) {
 	return pc.ImageLoadHandlers().NewOrExisting(image)
+}
+
+type nullLoadHandler struct{}
+
+func newNullLoadHandler(_ secureBootAuthoritySet, _ peImageHandle) (imageLoadHandler, error) {
+	return new(nullLoadHandler), nil
+}
+
+func (*nullLoadHandler) MeasureImageStart(_ pcrBranchContext) error {
+	return nil
+}
+
+func (*nullLoadHandler) MeasureImageLoad(_ pcrBranchContext, _ peImageHandle) (imageLoadHandler, error) {
+	return nil, errors.New("unrecognized image")
 }

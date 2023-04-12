@@ -20,26 +20,20 @@
 package efi
 
 import (
-	"bytes"
-
-	"github.com/canonical/go-tpm2"
+	"errors"
 )
 
-// fwContext maintains context associated with the platform firmware for a branch
-type fwContext struct {
-	Db                 *secureBootDB
-	verificationEvents tpm2.DigestList
+type ubuntuCoreUKILoadHandler struct{}
+
+func newUbuntuCoreUKILoadHandler(_ secureBootAuthoritySet, _ peImageHandle) (imageLoadHandler, error) {
+	return new(ubuntuCoreUKILoadHandler), nil
 }
 
-func (c *fwContext) AppendVerificationEvent(digest tpm2.Digest) {
-	c.verificationEvents = append(c.verificationEvents, digest)
+func (h *ubuntuCoreUKILoadHandler) MeasureImageStart(_ pcrBranchContext) error {
+	// TODO: Add stuff that the kernel measures here
+	return nil
 }
 
-func (c *fwContext) HasVerificationEvent(digest tpm2.Digest) bool {
-	for _, e := range c.verificationEvents {
-		if bytes.Equal(e, digest) {
-			return true
-		}
-	}
-	return false
+func (h *ubuntuCoreUKILoadHandler) MeasureImageLoad(_ pcrBranchContext, _ peImageHandle) (imageLoadHandler, error) {
+	return nil, errors.New("kernel is a leaf image")
 }

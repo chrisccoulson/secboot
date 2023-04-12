@@ -20,6 +20,9 @@
 package efi
 
 import (
+	"bytes"
+	"crypto/x509"
+
 	efi "github.com/canonical/go-efilib"
 	"github.com/canonical/tcglog-parser"
 	"github.com/snapcore/secboot/internal/testutil"
@@ -28,10 +31,15 @@ import (
 // Export constants for testing
 const (
 	BootManagerCodeProfile                     = bootManagerCodeProfile
+	GrubChainloaderUsesShimProtocol            = grubChainloaderUsesShimProtocol
 	SecureBootPolicyProfile                    = secureBootPolicyProfile
+	ShimFixVariableAuthorityEventsMatchSpec    = shimFixVariableAuthorityEventsMatchSpec
+	ShimHasSbatRevocationManagement            = shimHasSbatRevocationManagement
+	ShimHasSbatVerification                    = shimHasSbatVerification
 	ShimName                                   = shimName
 	ShimSbatPolicyLatest                       = shimSbatPolicyLatest
 	ShimSbatPolicyPrevious                     = shimSbatPolicyPrevious
+	ShimVendorCertContainsDb                   = shimVendorCertContainsDb
 	ShimVendorCertIsX509                       = shimVendorCertIsX509
 	ShimVendorCertIsDb                         = shimVendorCertIsDb
 	SignatureDBUpdateNoFirmwareQuirk           = signatureDBUpdateNoFirmwareQuirk
@@ -42,14 +50,18 @@ const (
 var (
 	ApplySignatureDBUpdate        = applySignatureDBUpdate
 	DefaultEnv                    = defaultEnv
+	MakeSecureBootNamespaceRules  = makeSecureBootNamespaceRules
 	MustParseShimVersion          = mustParseShimVersion
 	NewestSbatLevel               = newestSbatLevel
+	NewFwLoadHandler              = newFwLoadHandler
 	NewOrExistingImageLoadHandler = newOrExistingImageLoadHandler
 	NewPcrBranchContextImpl       = newPcrBranchContextImpl
 	NewPcrImagesMeasurer          = newPcrImagesMeasurer
 	NewPcrProfileGenerator        = newPcrProfileGenerator
 	NewRootVarsCollector          = newRootVarsCollector
 	NewShimImageHandle            = newShimImageHandle
+	NewShimLoadHandler            = newShimLoadHandler
+	NewShimLoadHandlerConstructor = newShimLoadHandlerConstructor
 	OpenPeImage                   = openPeImage
 	ParseShimVersion              = parseShimVersion
 	ParseShimVersionDataIdent     = parseShimVersionDataIdent
@@ -60,6 +72,8 @@ var (
 // Alias some unexported types for testing. These are required in order to pass these between functions in tests, or to access
 // unexported members of some unexported types.
 type FwContext = fwContext
+type GrubFlags = grubFlags
+type GrubLoadHandler = grubLoadHandler
 type ImageLoadHandler = imageLoadHandler
 type ImageLoadHandlers = imageLoadHandlers
 type ImageLoadParamsSet = imageLoadParamsSet
@@ -77,15 +91,30 @@ type SecureBootDB = secureBootDB
 type SecureBootNamespaceRules = secureBootNamespaceRules
 type SecureBootPolicyMixin = secureBootPolicyMixin
 type ShimContext = shimContext
+type ShimFlags = shimFlags
 type ShimImageHandle = shimImageHandle
+type ShimLoadHandler = shimLoadHandler
 type ShimSbatLevel = shimSbatLevel
 type ShimSbatPolicy = shimSbatPolicy
 type ShimVendorCertFormat = shimVendorCertFormat
 type ShimVersion = shimVersion
 type SignatureDBUpdateFirmwareQuirk = signatureDBUpdateFirmwareQuirk
+type UbuntuCoreUKILoadHandler = ubuntuCoreUKILoadHandler
 type VarBranch = varBranch
+type VarReadWriter = varReadWriter
 
 // Helper functions
+func AddSecureBootNamespaceDelegatedAuthority(rules SecureBootNamespaceRules, orig, delegated *x509.Certificate) {
+	for _, ns := range rules.(*secureBootNamespaceRulesImpl).namespaces {
+		for _, authority := range ns.authorities {
+			if bytes.Equal(authority.subject, orig.RawSubject) && bytes.Equal(authority.subjectKeyId, orig.SubjectKeyId) && authority.publicKeyAlgorithm == orig.PublicKeyAlgorithm {
+				ns.AddAuthority(delegated)
+				return
+			}
+		}
+	}
+}
+
 func ImageLoadActivityNext(activity ImageLoadActivity) []ImageLoadActivity {
 	return activity.next()
 }
@@ -123,6 +152,14 @@ func MockNewFwLoadHandler(fn func(*tcglog.Log) ImageLoadHandler) (restore func()
 	newFwLoadHandler = fn
 	return func() {
 		newFwLoadHandler = orig
+	}
+}
+
+func MockNewShimImageHandle(fn func(peImageHandle) shimImageHandle) (restore func()) {
+	orig := newShimImageHandle
+	newShimImageHandle = fn
+	return func() {
+		newShimImageHandle = orig
 	}
 }
 

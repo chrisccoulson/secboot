@@ -17,29 +17,28 @@
  *
  */
 
-package efi
+package testutil
 
 import (
-	"bytes"
+	"encoding/pem"
 
-	"github.com/canonical/go-tpm2"
+	. "gopkg.in/check.v1"
 )
 
-// fwContext maintains context associated with the platform firmware for a branch
-type fwContext struct {
-	Db                 *secureBootDB
-	verificationEvents tpm2.DigestList
+func DecodePEMType(c *C, expectType string, data []byte) []byte {
+	block, rest := pem.Decode(data)
+	c.Assert(rest, HasLen, 0)
+	c.Assert(block.Type, Equals, expectType)
+	return block.Bytes
 }
 
-func (c *fwContext) AppendVerificationEvent(digest tpm2.Digest) {
-	c.verificationEvents = append(c.verificationEvents, digest)
-}
-
-func (c *fwContext) HasVerificationEvent(digest tpm2.Digest) bool {
-	for _, e := range c.verificationEvents {
-		if bytes.Equal(e, digest) {
-			return true
-		}
+func MustDecodePEMType(expectType string, data []byte) []byte {
+	block, rest := pem.Decode(data)
+	if len(rest) > 0 {
+		panic("trailing bytes")
 	}
-	return false
+	if block.Type != expectType {
+		panic("unexpected type")
+	}
+	return block.Bytes
 }

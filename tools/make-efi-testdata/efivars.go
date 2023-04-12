@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/canonical/go-efilib"
+	efi "github.com/canonical/go-efilib"
 
 	"golang.org/x/xerrors"
 )
@@ -234,7 +234,7 @@ func newEfiVarData(srcDir string) ([]efiVarData, error) {
 				newGlobalVar("SecureBoot", efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess, bytesPayload([]byte{0x01})),
 				newGlobalVar("PK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
 					&x509Esl{
-						cert:  certs["PkKek-1-Ubuntu"],
+						cert:  certs["UbuntuPkKek1"],
 						owner: efi.MakeGUID(0x4e32566d, 0x8e9e, 0x4f52, 0x81d3, [...]uint8{0x5b, 0xb9, 0x71, 0x5f, 0x97, 0x27}),
 					}),
 				newGlobalVar("KEK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
@@ -259,7 +259,7 @@ func newEfiVarData(srcDir string) ([]efiVarData, error) {
 				newGlobalVar("SecureBoot", efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess, bytesPayload([]byte{0x01})),
 				newGlobalVar("PK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
 					&x509Esl{
-						cert:  certs["PkKek-1-Ubuntu"],
+						cert:  certs["UbuntuPkKek1"],
 						owner: efi.MakeGUID(0x4e32566d, 0x8e9e, 0x4f52, 0x81d3, [...]uint8{0x5b, 0xb9, 0x71, 0x5f, 0x97, 0x27}),
 					}),
 				newGlobalVar("KEK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
@@ -288,7 +288,7 @@ func newEfiVarData(srcDir string) ([]efiVarData, error) {
 				newGlobalVar("SecureBoot", efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess, bytesPayload([]byte{0x01})),
 				newGlobalVar("PK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
 					&x509Esl{
-						cert:  certs["PkKek-1-Ubuntu"],
+						cert:  certs["UbuntuPkKek1"],
 						owner: efi.MakeGUID(0x4e32566d, 0x8e9e, 0x4f52, 0x81d3, [...]uint8{0x5b, 0xb9, 0x71, 0x5f, 0x97, 0x27}),
 					}),
 				newGlobalVar("KEK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
@@ -317,7 +317,7 @@ func newEfiVarData(srcDir string) ([]efiVarData, error) {
 				newGlobalVar("SecureBoot", efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess, bytesPayload([]byte{0x01})),
 				newGlobalVar("PK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
 					&x509Esl{
-						cert:  certs["PkKek-1-Ubuntu"],
+						cert:  certs["UbuntuPkKek1"],
 						owner: efi.MakeGUID(0x4e32566d, 0x8e9e, 0x4f52, 0x81d3, [...]uint8{0x5b, 0xb9, 0x71, 0x5f, 0x97, 0x27}),
 					}),
 				newGlobalVar("KEK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
@@ -354,7 +354,7 @@ func newEfiVarData(srcDir string) ([]efiVarData, error) {
 				newGlobalVar("SecureBoot", efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess, bytesPayload([]byte{0x01})),
 				newGlobalVar("PK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
 					&x509Esl{
-						cert:  certs["PkKek-1-Ubuntu"],
+						cert:  certs["UbuntuPkKek1"],
 						owner: efi.MakeGUID(0x4e32566d, 0x8e9e, 0x4f52, 0x81d3, [...]uint8{0x5b, 0xb9, 0x71, 0x5f, 0x97, 0x27}),
 					}),
 				newGlobalVar("KEK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
@@ -394,7 +394,7 @@ func newEfiVarData(srcDir string) ([]efiVarData, error) {
 				newGlobalVar("SecureBoot", efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess, bytesPayload([]byte{0x01})),
 				newGlobalVar("PK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
 					&x509Esl{
-						cert:  certs["PkKek-1-Ubuntu"],
+						cert:  certs["UbuntuPkKek1"],
 						owner: efi.MakeGUID(0x4e32566d, 0x8e9e, 0x4f52, 0x81d3, [...]uint8{0x5b, 0xb9, 0x71, 0x5f, 0x97, 0x27}),
 					}),
 				newGlobalVar("KEK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
@@ -419,7 +419,7 @@ func newEfiVarData(srcDir string) ([]efiVarData, error) {
 				newGlobalVar("SecureBoot", efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess, bytesPayload([]byte{0x01})),
 				newGlobalVar("PK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,
 					&x509Esl{
-						cert:  certs["PkKek-1-Ubuntu"],
+						cert:  certs["UbuntuPkKek1"],
 						owner: efi.MakeGUID(0x4e32566d, 0x8e9e, 0x4f52, 0x81d3, [...]uint8{0x5b, 0xb9, 0x71, 0x5f, 0x97, 0x27}),
 					}),
 				newGlobalVar("KEK", efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess|efi.AttributeTimeBasedAuthenticatedWriteAccess,

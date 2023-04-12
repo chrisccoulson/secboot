@@ -38,22 +38,16 @@ import (
 )
 
 const (
+	shimMokListRTName   = "MokListRT"
 	shimName            = "Shim"
 	shimSbatLevelName   = "SbatLevel"
 	shimSbatLevelRTName = "SbatLevelRT"
 	shimSbatPolicyName  = "SbatPolicy"
+	shimVendorDbName    = "vendor_db"
 )
 
 var (
 	shimGuid = efi.MakeGUID(0x605dab50, 0xe046, 0x4300, 0xabb6, [...]uint8{0x3d, 0xd8, 0x10, 0xdd, 0x8b, 0x23}) // SHIM_LOCK_GUID
-
-	// msKnownSbatLevels are all of the SBAT revocation levels associated with the
-	// Microsoft UEFI CA. This is required when upgrading from pre-SBAT to SBAT-capable
-	// shim because it isn't possible to determine the current device policy.
-	msKnownSbatLevels = [][]byte{
-		[]byte("sbat,1,2021030218\n"),
-		[]byte("sbat,1,2022052400\ngrub,2\n"),
-		[]byte("sbat,1,2022111500\nshim,2\ngrub,3\n")}
 
 	shimIdentVersionRE = regexp.MustCompile(`^\$Version:[[:blank:]]*([[:digit:].]*)[[:blank:]]*\$$`)
 	shimVersionRE      = regexp.MustCompile(`^([[:digit:]]+)(?:\.([[:digit:]]+))?$`)
@@ -89,6 +83,26 @@ func readShimSbatPolicy(vars varReader) (shimSbatPolicy, error) {
 			return 0, errors.New("invalid SbatPolicy value")
 		}
 	}
+}
+
+type shimSbatPolicyLatestOption struct{}
+
+func WithShimSbatPolicyLatest() PCRProfileOption {
+	return shimSbatPolicyLatestOption{}
+}
+
+func (shimSbatPolicyLatestOption) applyOptionTo(gen *pcrProfileGenerator) {
+	gen.varModifiers = append(gen.varModifiers, func(rootVars *rootVarsCollector) error {
+		for _, root := range rootVars.PeekAll() {
+			if err := root.WriteVar(
+				shimSbatPolicyName, shimGuid,
+				efi.AttributeNonVolatile|efi.AttributeBootserviceAccess|efi.AttributeRuntimeAccess,
+				[]byte{uint8(shimSbatPolicyLatest)}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // newestSbatLevel returns the newest SBAT revocation level from one or
@@ -201,6 +215,10 @@ func (a shimVersion) Compare(b shimVersion) int {
 	}
 }
 
+func (a shimVersion) String() string {
+	return strconv.FormatUint(uint64(a.Major), 10) + "." + strconv.FormatUint(uint64(a.Minor), 10)
+}
+
 // shimVendorCertFormat describes the format of the content of shim's .vendor_cert
 // section. This is important because it affects the format of measurements in some
 // circumstances.
@@ -254,7 +272,7 @@ type shimImageHandleImpl struct {
 }
 
 // newShimImageHandle returns a new shimImageHandle for the supplied peImageHandle.
-func newShimImageHandle(image peImageHandle) shimImageHandle {
+var newShimImageHandle = func(image peImageHandle) shimImageHandle {
 	return &shimImageHandleImpl{peImageHandle: image}
 }
 
