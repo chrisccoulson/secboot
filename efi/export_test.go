@@ -21,11 +21,14 @@ package efi
 
 import (
 	efi "github.com/canonical/go-efilib"
+	"github.com/canonical/tcglog-parser"
 	"github.com/snapcore/secboot/internal/testutil"
 )
 
 // Export constants for testing
 const (
+	BootManagerCodeProfile                     = bootManagerCodeProfile
+	SecureBootPolicyProfile                    = secureBootPolicyProfile
 	ShimName                                   = shimName
 	ShimSbatPolicyLatest                       = shimSbatPolicyLatest
 	ShimSbatPolicyPrevious                     = shimSbatPolicyPrevious
@@ -37,29 +40,43 @@ const (
 
 // Export variables and unexported functions for testing
 var (
-	ApplySignatureDBUpdate    = applySignatureDBUpdate
-	DefaultEnv                = defaultEnv
-	MustParseShimVersion      = mustParseShimVersion
-	NewestSbatLevel           = newestSbatLevel
-	NewRootVarsCollector      = newRootVarsCollector
-	NewShimImageHandle        = newShimImageHandle
-	OpenPeImage               = openPeImage
-	ParseShimVersion          = parseShimVersion
-	ParseShimVersionDataIdent = parseShimVersionDataIdent
-	ReadShimSbatPolicy        = readShimSbatPolicy
-	ShimGuid                  = shimGuid
+	ApplySignatureDBUpdate        = applySignatureDBUpdate
+	DefaultEnv                    = defaultEnv
+	MustParseShimVersion          = mustParseShimVersion
+	NewestSbatLevel               = newestSbatLevel
+	NewOrExistingImageLoadHandler = newOrExistingImageLoadHandler
+	NewPcrBranchContextImpl       = newPcrBranchContextImpl
+	NewPcrImagesMeasurer          = newPcrImagesMeasurer
+	NewPcrProfileGenerator        = newPcrProfileGenerator
+	NewRootVarsCollector          = newRootVarsCollector
+	NewShimImageHandle            = newShimImageHandle
+	OpenPeImage                   = openPeImage
+	ParseShimVersion              = parseShimVersion
+	ParseShimVersionDataIdent     = parseShimVersionDataIdent
+	ReadShimSbatPolicy            = readShimSbatPolicy
+	ShimGuid                      = shimGuid
 )
 
 // Alias some unexported types for testing. These are required in order to pass these between functions in tests, or to access
 // unexported members of some unexported types.
+type FwContext = fwContext
+type ImageLoadHandler = imageLoadHandler
+type ImageLoadHandlers = imageLoadHandlers
 type ImageLoadParamsSet = imageLoadParamsSet
 type LoadParams = loadParams
+type PcrBranchContext = pcrBranchContext
+type PcrImagesMeasurer = pcrImagesMeasurer
+type PcrProfileContext = pcrProfileContext
+type PcrProfileFlags = pcrProfileFlags
 type PeImageHandle = peImageHandle
 type RootVarReaderKey = rootVarReaderKey
+type RootVarsCollector = rootVarsCollector
 type SbatComponent = sbatComponent
 type SecureBootAuthority = secureBootAuthority
 type SecureBootDB = secureBootDB
+type SecureBootNamespaceRules = secureBootNamespaceRules
 type SecureBootPolicyMixin = secureBootPolicyMixin
+type ShimContext = shimContext
 type ShimImageHandle = shimImageHandle
 type ShimSbatLevel = shimSbatLevel
 type ShimSbatPolicy = shimSbatPolicy
@@ -75,6 +92,14 @@ func ImageLoadActivityNext(activity ImageLoadActivity) []ImageLoadActivity {
 
 func ImageLoadActivityParams(activity ImageLoadActivity) imageLoadParamsSet {
 	return activity.params()
+}
+
+func (s *ImageLoadSequences) Images() []ImageLoadActivity {
+	return s.images
+}
+
+func (s *ImageLoadSequences) Params() imageLoadParamsSet {
+	return s.params
 }
 
 func MockEFIVarsPath(path string) (restore func()) {
@@ -93,6 +118,22 @@ func MockEventLogPath(path string) (restore func()) {
 	}
 }
 
+func MockNewFwLoadHandler(fn func(*tcglog.Log) ImageLoadHandler) (restore func()) {
+	orig := newFwLoadHandler
+	newFwLoadHandler = fn
+	return func() {
+		newFwLoadHandler = orig
+	}
+}
+
+func MockOpenPeImage(fn func(Image) (peImageHandle, error)) (restore func()) {
+	orig := openPeImage
+	openPeImage = fn
+	return func() {
+		openPeImage = orig
+	}
+}
+
 func MockReadVar(dir string) (restore func()) {
 	origReadVar := readVar
 	readVar = func(name string, guid efi.GUID) ([]byte, efi.VariableAttributes, error) {
@@ -101,6 +142,14 @@ func MockReadVar(dir string) (restore func()) {
 
 	return func() {
 		readVar = origReadVar
+	}
+}
+
+func MockMakeSecureBootNamespaceRules(fn func() secureBootNamespaceRules) (restore func()) {
+	orig := makeSecureBootNamespaceRules
+	makeSecureBootNamespaceRules = fn
+	return func() {
+		makeSecureBootNamespaceRules = orig
 	}
 }
 
