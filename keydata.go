@@ -134,6 +134,8 @@ type KeyParams struct {
 	// already encoded to JSON can be supplied using the json.RawMessage type.
 	Handle interface{}
 
+	Role string
+
 	// EncryptedPayload contains the encrypted and authenticated payload. The
 	// plaintext payload should be created with [MakeDiskUnlockKey].
 	EncryptedPayload []byte
@@ -298,6 +300,17 @@ type keyData struct {
 	// PlatformKeyDataHandler to recover the cleartext keys from one of
 	// the encrypted payloads.
 	PlatformHandle json.RawMessage `json:"platform_handle"`
+
+	// Role describes the role of this key, and is used to restrict the
+	// scope of authorizations associated with it (such as PCR policies).
+	// XXX: It's a bit strange having it here because it's not used by
+	//  this package, but it does allow the configuration manager to filter
+	//  keys by role without having to decode the platform specific part.
+	//  Maybe in the future, KeyData should be an interface implemented
+	//  entirely by each platform with some shared helpers rather than
+	//  what we have now (a concrete KeyData implementation with an
+	//  opaque blob).
+	Role string `json:"role"`
 
 	KDFAlg hashAlg `json:"kdf_alg,omitempty"`
 
@@ -536,6 +549,10 @@ func (d *KeyData) AuthMode() (out AuthMode) {
 	}
 }
 
+func (d *KeyData) Role() string {
+	return d.data.Role
+}
+
 // UnmarshalPlatformHandle unmarshals the JSON platform handle payload into the
 // supplied handle, which must be a non-nil pointer.
 func (d *KeyData) UnmarshalPlatformHandle(handle interface{}) error {
@@ -683,6 +700,7 @@ func NewKeyData(params *KeyParams) (*KeyData, error) {
 		data: keyData{
 			Version:          KeyDataVersion,
 			PlatformName:     params.PlatformName,
+			Role:             params.Role,
 			PlatformHandle:   json.RawMessage(encodedHandle),
 			KDFAlg:           hashAlg(params.KDFAlg),
 			EncryptedPayload: params.EncryptedPayload,
