@@ -26,6 +26,11 @@ import (
 	"github.com/snapcore/secboot/internal/luksview"
 )
 
+var (
+	UnmarshalV1KeyPayload  = unmarshalV1KeyPayload
+	UnmarshalProtectedKeys = unmarshalProtectedKeys
+)
+
 func (o *KDFOptions) DeriveCostParams(keyLen int, kdf KDF) (*KDFCostParams, error) {
 	return o.deriveCostParams(keyLen, kdf)
 }
