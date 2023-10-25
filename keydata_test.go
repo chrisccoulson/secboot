@@ -1073,73 +1073,6 @@ func (s *keyDataSuite) TestWriteAtomic1(c *C) {
 		params:  protected})
 }
 
-func (s *keyDataSuite) TestWriteAtomic2(c *C) {
-	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
-
-	keyData, err := NewKeyData(protected)
-	c.Assert(err, IsNil)
-
-	s.testWriteAtomic(c, &testWriteAtomicData{
-		keyData: keyData,
-		params:  protected})
-}
-
-func (s *keyDataSuite) TestWriteAtomic3(c *C) {
-	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
-
-	keyData, err := NewKeyData(protected)
-	c.Assert(err, IsNil)
-
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-
-	c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
-
-	s.testWriteAtomic(c, &testWriteAtomicData{
-		keyData: keyData,
-		params:  protected,
-		nmodels: len(models)})
-}
-
-func (s *keyDataSuite) TestWriteAtomic4(c *C) {
-	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
-
-	keyData, err := NewKeyData(protected)
-	c.Assert(err, IsNil)
-
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "other-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-
-	c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
-
-	s.testWriteAtomic(c, &testWriteAtomicData{
-		keyData: keyData,
-		params:  protected,
-		nmodels: len(models)})
-}
-
 type testReadKeyDataData struct {
 	key        DiskUnlockKey
 	auxKey     PrimaryKey
@@ -1438,8 +1371,9 @@ func (s *keyDataSuite) TestLegacyKeyData(c *C) {
 
 	j := []byte(
 		`{` +
-			// Technically the version field is not part of a legacy keydata object but
-			// it doesn't hurt the test's purpose
+			// The new version field will be added as 0 by default during unmarshalling
+			// with ReadKeyData even if it is missing.
+			// Explicitly adding the version field here so that the test passes.
 			`"version":0,` +
 			`"platform_name":"mock",` +
 			`"platform_handle":{` +
@@ -1503,8 +1437,9 @@ func (s *keyDataSuite) TestLegacyKeyData(c *C) {
 	c.Check(keyData.WriteAtomic(w), IsNil)
 	c.Check(w.final.Bytes(), DeepEquals, []byte(
 		`{`+
-			// Technically the version field is not part of a legacy keydata object but
-			// it doesn't hurt the test's purpose
+			// The new version field will be added as 0 by default during unmarshalling
+			// with ReadKeyData even if it is missing.
+			// Explicitly adding the version field here so that the test passes.
 			`"version":0,`+
 			`"platform_name":"mock",`+
 			`"platform_handle":{`+
