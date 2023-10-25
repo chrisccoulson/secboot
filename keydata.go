@@ -676,7 +676,7 @@ func (d *KeyData) WriteAtomic(w KeyDataWriter) error {
 
 // ReadKeyData reads the key data from the supplied KeyDataReader, returning a
 // new KeyData object.
-func ReadKeyData(r KeyDataReader) (*KeyData, error) {
+var ReadKeyData = func(r KeyDataReader) (*KeyData, error) {
 	d := &KeyData{readableName: r.ReadableName()}
 	dec := json.NewDecoder(r)
 	if err := dec.Decode(&d.data); err != nil {
@@ -690,7 +690,7 @@ func ReadKeyData(r KeyDataReader) (*KeyData, error) {
 // should be created by a platform-specific package, containing a payload encrypted by
 // the platform's secure device and the associated handle required for subsequent
 // recovery of the keys.
-func NewKeyData(params *KeyParams) (*KeyData, error) {
+var NewKeyData = func(params *KeyParams) (*KeyData, error) {
 	encodedHandle, err := json.Marshal(params.Handle)
 	if err != nil {
 		return nil, xerrors.Errorf("cannot encode platform handle: %w", err)
@@ -798,7 +798,7 @@ func (k *protectedKeys) marshalASN1(builder *cryptobyte.Builder) {
 	})
 }
 
-func MakeDiskUnlockKey(rand io.Reader, alg crypto.Hash, primaryKey PrimaryKey) (unlockKey DiskUnlockKey, cleartextPayload []byte, err error) {
+var MakeDiskUnlockKey = func(rand io.Reader, alg crypto.Hash, primaryKey PrimaryKey) (unlockKey DiskUnlockKey, cleartextPayload []byte, err error) {
 	unique := make([]byte, len(primaryKey))
 	if _, err := io.ReadFull(rand, unique); err != nil {
 		return nil, nil, xerrors.Errorf("cannot make unique ID: %w", err)

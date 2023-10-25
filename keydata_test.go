@@ -39,6 +39,7 @@ import (
 
 	. "github.com/snapcore/secboot"
 	"github.com/snapcore/secboot/internal/testutil"
+	snapd_testutil "github.com/snapcore/snapd/testutil"
 
 	"golang.org/x/crypto/cryptobyte"
 	cryptobyte_asn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -89,6 +90,7 @@ func (h *mockPlatformKeyDataHandler) unmarshalHandle(data *PlatformKeyData) (*mo
 func (h *mockPlatformKeyDataHandler) checkKey(handle *mockPlatformKeyDataHandle, key []byte) error {
 	m := hmac.New(func() hash.Hash { return crypto.SHA256.New() }, handle.Key)
 	m.Write(key)
+
 	if !bytes.Equal(handle.AuthKeyHMAC, m.Sum(nil)) {
 		return &PlatformHandlerError{Type: PlatformHandlerErrorInvalidAuthKey, Err: errors.New("the supplied key is incorrect")}
 	}
@@ -231,10 +233,13 @@ func toHash(c *C, v interface{}) crypto.Hash {
 }
 
 type keyDataTestBase struct {
+	snapd_testutil.BaseTest
 	handler *mockPlatformKeyDataHandler
+	Version int
 }
 
 func (s *keyDataTestBase) SetUpSuite(c *C) {
+	s.Version = KeyDataVersion
 	s.handler = &mockPlatformKeyDataHandler{}
 	RegisterPlatformKeyDataHandler(mockPlatformName, s.handler)
 }
@@ -253,10 +258,16 @@ func (s *keyDataTestBase) newPrimaryKey(c *C, sz1 int) PrimaryKey {
 	_, err := rand.Read(primaryKey)
 	c.Assert(err, IsNil)
 
+	if s.Version == 1 {
+		restore, err := MockMakeDiskUnlockKey(primaryKey)
+		c.Assert(err, IsNil)
+		s.AddCleanup(restore)
+	}
+
 	return PrimaryKey(primaryKey)
 }
 
-func (s *keyDataTestBase) mockProtectKeys(c *C, primaryKey PrimaryKey, modelAuthHash crypto.Hash) (out *KeyParams, unlockKey DiskUnlockKey) {
+func (s *keyDataTestBase) mockProtectKeys(c *C, primaryKey PrimaryKey) (out *KeyParams, unlockKey DiskUnlockKey) {
 	unique := make([]byte, len(primaryKey))
 	_, err := rand.Read(unique)
 	c.Assert(err, IsNil)
@@ -264,8 +275,18 @@ func (s *keyDataTestBase) mockProtectKeys(c *C, primaryKey PrimaryKey, modelAuth
 	reader := new(bytes.Buffer)
 	reader.Write(unique)
 
+	if s.Version == 1 {
+		restore, err := MockMakeDiskUnlockKey(primaryKey)
+		c.Assert(err, IsNil)
+		defer restore()
+	}
+
 	unlockKey, payload, err := MakeDiskUnlockKey(reader, crypto.SHA256, primaryKey)
 	c.Assert(err, IsNil)
+
+	if s.Version == 1 {
+		s.AddCleanup(MockNewKeyData(primaryKey, unlockKey))
+	}
 
 	k := make([]byte, 48)
 	_, err = rand.Read(k)
@@ -277,6 +298,7 @@ func (s *keyDataTestBase) mockProtectKeys(c *C, primaryKey PrimaryKey, modelAuth
 
 	h := hmac.New(func() hash.Hash { return crypto.SHA256.New() }, handle.Key)
 	h.Write(make([]byte, 32))
+
 	handle.AuthKeyHMAC = h.Sum(nil)
 
 	b, err := aes.NewCipher(handle.Key)
@@ -284,19 +306,17 @@ func (s *keyDataTestBase) mockProtectKeys(c *C, primaryKey PrimaryKey, modelAuth
 	stream := cipher.NewCFBEncrypter(b, handle.IV)
 
 	out = &KeyParams{
-		PlatformName:      mockPlatformName,
-		Handle:            &handle,
-		EncryptedPayload:  make([]byte, len(payload)),
-		PrimaryKey:        primaryKey,
-		KDFAlg:            crypto.SHA256,
-		SnapModelAuthHash: modelAuthHash}
+		PlatformName:     mockPlatformName,
+		Handle:           &handle,
+		EncryptedPayload: make([]byte, len(payload)),
+		KDFAlg:           crypto.SHA256}
 	stream.XORKeyStream(out.EncryptedPayload, payload)
 
 	return out, unlockKey
 }
 
-func (s *keyDataTestBase) mockProtectKeysWithPassphrase(c *C, primaryKey PrimaryKey, kdf KDF, kdfOptions *KDFOptions, authKeySize int, modelAuthHash crypto.Hash) (out *KeyWithPassphraseParams, unlockKey DiskUnlockKey) {
-	kp, unlockKey := s.mockProtectKeys(c, primaryKey, modelAuthHash)
+func (s *keyDataTestBase) mockProtectKeysWithPassphrase(c *C, primaryKey PrimaryKey, kdf KDF, kdfOptions *KDFOptions, authKeySize int) (out *KeyWithPassphraseParams, unlockKey DiskUnlockKey) {
+	kp, unlockKey := s.mockProtectKeys(c, primaryKey)
 
 	if kdfOptions == nil {
 		var defaultOptions KDFOptions
@@ -329,48 +349,52 @@ func (s *keyDataTestBase) checkKeyDataJSONCommon(c *C, j map[string]interface{},
 	c.Check(handle.Key, DeepEquals, expectedHandle.Key)
 	c.Check(handle.IV, DeepEquals, expectedHandle.IV)
 
-	m, ok := j["authorized_snap_models"].(map[string]interface{})
-	c.Assert(ok, testutil.IsTrue)
+	if s.Version == 1 {
+		snapModelAuthHash := crypto.SHA256
 
-	h := toHash(c, m["alg"])
-	c.Check(h, Equals, creationParams.SnapModelAuthHash)
+		m, ok := j["authorized_snap_models"].(map[string]interface{})
+		c.Assert(ok, testutil.IsTrue)
 
-	c.Check(m, testutil.HasKey, "hmacs")
-	if nmodels == 0 {
-		c.Check(m["hmacs"], IsNil)
-	} else {
-		c.Check(m["hmacs"], HasLen, nmodels)
-		hmacs, ok := m["hmacs"].([]interface{})
-		c.Check(ok, testutil.IsTrue)
-		for _, v := range hmacs {
-			str, ok := v.(string)
+		h := toHash(c, m["alg"])
+		c.Check(h, Equals, snapModelAuthHash)
+
+		c.Check(m, testutil.HasKey, "hmacs")
+		if nmodels == 0 {
+			c.Check(m["hmacs"], IsNil)
+		} else {
+			c.Check(m["hmacs"], HasLen, nmodels)
+			hmacs, ok := m["hmacs"].([]interface{})
 			c.Check(ok, testutil.IsTrue)
-			digest, err := base64.StdEncoding.DecodeString(str)
-			c.Check(err, IsNil)
-			c.Check(digest, HasLen, h.Size())
+			for _, v := range hmacs {
+				str, ok := v.(string)
+				c.Check(ok, testutil.IsTrue)
+				digest, err := base64.StdEncoding.DecodeString(str)
+				c.Check(err, IsNil)
+				c.Check(digest, HasLen, h.Size())
+			}
 		}
+
+		h = toHash(c, m["kdf_alg"])
+		c.Check(h, Equals, snapModelAuthHash)
+
+		m1, ok := m["key_digest"].(map[string]interface{})
+		c.Assert(ok, testutil.IsTrue)
+
+		h = toHash(c, m1["alg"])
+		c.Check(h, Equals, snapModelAuthHash)
+
+		str, ok := m1["salt"].(string)
+		c.Check(ok, testutil.IsTrue)
+		salt, err := base64.StdEncoding.DecodeString(str)
+		c.Check(err, IsNil)
+		c.Check(salt, HasLen, 32)
+
+		str, ok = m1["digest"].(string)
+		c.Check(ok, testutil.IsTrue)
+		digest, err := base64.StdEncoding.DecodeString(str)
+		c.Check(err, IsNil)
+		c.Check(digest, HasLen, h.Size())
 	}
-
-	h = toHash(c, m["kdf_alg"])
-	c.Check(h, Equals, creationParams.SnapModelAuthHash)
-
-	m1, ok := m["key_digest"].(map[string]interface{})
-	c.Assert(ok, testutil.IsTrue)
-
-	h = toHash(c, m1["alg"])
-	c.Check(h, Equals, creationParams.SnapModelAuthHash)
-
-	str, ok := m1["salt"].(string)
-	c.Check(ok, testutil.IsTrue)
-	salt, err := base64.StdEncoding.DecodeString(str)
-	c.Check(err, IsNil)
-	c.Check(salt, HasLen, 32)
-
-	str, ok = m1["digest"].(string)
-	c.Check(ok, testutil.IsTrue)
-	digest, err := base64.StdEncoding.DecodeString(str)
-	c.Check(err, IsNil)
-	c.Check(digest, HasLen, h.Size())
 }
 
 func (s *keyDataTestBase) checkKeyDataJSONDecodedAuthModeNone(c *C, j map[string]interface{}, creationParams *KeyParams, nmodels int) {
@@ -411,7 +435,7 @@ func (s *keyDataTestBase) checkKeyDataJSONDecodedAuthModePassphrase(c *C, j map[
 
 	version, ok := j["version"].(float64)
 	c.Check(ok, testutil.IsTrue)
-	c.Check(version, Equals, float64(2))
+	c.Check(version, Equals, float64(s.Version))
 
 	p, ok := j["passphrase_params"].(map[string]interface{})
 	c.Check(ok, testutil.IsTrue)
@@ -599,12 +623,31 @@ func (s *keyDataSuite) TestKeyPayloadUnmarshalInvalid1(c *C) {
 		payload[i] = 0xff
 	}
 
-	pk, err := UnmarshalProtectedKeys(payload)
-	c.Check(err, ErrorMatches, "malformed input")
-	c.Check(pk, IsNil)
+	if s.Version == 1 {
+		key, auxKey, err := UnmarshalV1KeyPayload(payload)
+		c.Check(err, ErrorMatches, "EOF")
+		c.Check(key, IsNil)
+		c.Check(auxKey, IsNil)
+	} else {
+		pk, err := UnmarshalProtectedKeys(payload)
+		c.Check(err, ErrorMatches, "malformed input")
+		c.Check(pk, IsNil)
+	}
 }
 
 func (s *keyDataSuite) TestKeyPayloadUnmarshalInvalid2(c *C) {
+
+	if s.Version == 1 {
+		payload := MarshalKeys(make(DiskUnlockKey, 32), make(PrimaryKey, 32))
+		payload = append(payload, 0xff)
+
+		key, auxKey, err := UnmarshalV1KeyPayload(payload)
+		c.Check(err, ErrorMatches, "1 excess byte\\(s\\)")
+		c.Check(key, IsNil)
+		c.Check(auxKey, IsNil)
+		return
+	}
+
 	builder := cryptobyte.NewBuilder(nil)
 	builder.AddASN1(cryptobyte_asn1.SEQUENCE, func(b *cryptobyte.Builder) { // ProtectedKeys ::= SEQUENCE {
 	})
@@ -641,7 +684,7 @@ func (h *keyDataHasher) Commit() error { return nil }
 
 func (s *keyDataSuite) TestKeyDataID(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
@@ -656,7 +699,7 @@ func (s *keyDataSuite) TestKeyDataID(c *C) {
 
 func (s *keyDataSuite) TestNewKeyData(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 	keyData, err := NewKeyData(protected)
 	c.Check(keyData, NotNil)
 	c.Check(err, IsNil)
@@ -664,7 +707,7 @@ func (s *keyDataSuite) TestNewKeyData(c *C) {
 
 func (s *keyDataSuite) TestUnmarshalPlatformHandle(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
 
@@ -676,7 +719,7 @@ func (s *keyDataSuite) TestUnmarshalPlatformHandle(c *C) {
 
 func (s *keyDataSuite) TestMarshalAndUpdatePlatformHandle(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
 
@@ -695,7 +738,7 @@ func (s *keyDataSuite) TestMarshalAndUpdatePlatformHandle(c *C) {
 
 func (s *keyDataSuite) TestRecoverKeys(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, unlockKey := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, unlockKey := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
@@ -707,7 +750,7 @@ func (s *keyDataSuite) TestRecoverKeys(c *C) {
 
 func (s *keyDataSuite) TestRecoverKeysUnrecognizedPlatform(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 
 	protected.PlatformName = "foo"
 
@@ -721,7 +764,7 @@ func (s *keyDataSuite) TestRecoverKeysUnrecognizedPlatform(c *C) {
 
 func (s *keyDataSuite) TestRecoverKeysInvalidData(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 
 	protected.Handle = []byte("\"\"")
 
@@ -738,7 +781,7 @@ func (s *keyDataSuite) testRecoverKeysWithPassphrase(c *C, passphrase string) {
 	var kdf testutil.MockKDF
 
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, unlockKey := s.mockProtectKeysWithPassphrase(c, primaryKey, &kdf, nil, 32, crypto.SHA256)
+	protected, unlockKey := s.mockProtectKeysWithPassphrase(c, primaryKey, &kdf, nil, 32)
 
 	keyData, err := NewKeyDataWithPassphrase(protected, passphrase, &kdf)
 	c.Assert(err, IsNil)
@@ -759,9 +802,15 @@ func (s *keyDataSuite) TestRecoverKeysWithPassphrase2(c *C) {
 
 func (s *keyDataSuite) TestNewKeyDataWithPassphraseNotSupported(c *C) {
 	// s.handler.passphraseSupport = false
+
+	// we don't need to test change passphrase scenarios for v1 keydata
+	if s.Version == 1 {
+		return
+	}
+
 	primaryKey := s.newPrimaryKey(c, 32)
 	var kdf testutil.MockKDF
-	passphraseParams, _ := s.mockProtectKeysWithPassphrase(c, primaryKey, &kdf, nil, 32, crypto.SHA256)
+	passphraseParams, _ := s.mockProtectKeysWithPassphrase(c, primaryKey, &kdf, nil, 32)
 
 	_, err := NewKeyDataWithPassphrase(passphraseParams, "passphrase", &kdf)
 	c.Check(err, ErrorMatches, "cannot set passphrase: not supported")
@@ -769,6 +818,12 @@ func (s *keyDataSuite) TestNewKeyDataWithPassphraseNotSupported(c *C) {
 
 func (s *keyDataSuite) TestChangePassphraseNotSupported(c *C) {
 	// s.handler.passphraseSupport = false with KeydataWithPassphrase payload
+
+	// don't run for keyDataLegacySuite
+	if s.Version == 1 {
+		return
+	}
+
 	j := []byte(`{"version":2,"platform_name":"mock","platform_handle":{"key":` +
 		`"6yrcBpn9ZmjZgiLqFZtp1nns+3zjVo/yxrbSqwhTuf4=","iv":"HDEMeSzmDmsGZTzVTOxPOw==",` +
 		`"auth-key-hmac":"WQ3rrqhi5TMVHYiP3j10UG0h2D8nKQ0cs9YvXZGzRA8="},"kdf_alg":"sha256",` +
@@ -809,11 +864,16 @@ type testChangePassphraseData struct {
 }
 
 func (s *keyDataSuite) testChangePassphrase(c *C, data *testChangePassphraseData) {
+	// we don't need to test change passphrase scenarios for v1 keydata
+	if s.Version == 1 {
+		return
+	}
+
 	s.handler.passphraseSupport = true
 
 	primaryKey := s.newPrimaryKey(c, 32)
 	var kdf testutil.MockKDF
-	protected, _ := s.mockProtectKeysWithPassphrase(c, primaryKey, &kdf, data.kdfOptions, 32, crypto.SHA256)
+	protected, _ := s.mockProtectKeysWithPassphrase(c, primaryKey, &kdf, data.kdfOptions, 32)
 
 	keyData, err := NewKeyDataWithPassphrase(protected, data.passphrase1, &kdf)
 	c.Check(err, IsNil)
@@ -858,6 +918,10 @@ func (s *keyDataSuite) TestChangePassphraseForceIterations(c *C) {
 }
 
 func (s *keyDataSuite) TestChangePassphraseWrongPassphrase(c *C) {
+	// we don't need to test change passphrase scenarios for v1 keydata
+	if s.Version == 1 {
+		return
+	}
 	s.handler.passphraseSupport = true
 
 	primaryKey := s.newPrimaryKey(c, 32)
@@ -866,7 +930,7 @@ func (s *keyDataSuite) TestChangePassphraseWrongPassphrase(c *C) {
 	kdfOptions := &KDFOptions{
 		TargetDuration: 100 * time.Millisecond,
 	}
-	protected, _ := s.mockProtectKeysWithPassphrase(c, primaryKey, &kdf, kdfOptions, 32, crypto.SHA256)
+	protected, _ := s.mockProtectKeysWithPassphrase(c, primaryKey, &kdf, kdfOptions, 32)
 
 	keyData, err := NewKeyDataWithPassphrase(protected, "12345678", &kdf)
 	c.Check(err, IsNil)
@@ -1030,6 +1094,11 @@ func (s *keyDataSuite) TestSnapModelAuth6(c *C) {
 }
 
 func (s *keyDataSuite) TestSetAuthorizedSnapModelsWithWrongKey(c *C) {
+
+	if s.Version != 1 {
+		c.Skip("Snap model authorization checks are done per-platform now.")
+	}
+
 	primaryKey := s.newPrimaryKey(c, 32)
 	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
 
@@ -1063,7 +1132,7 @@ func (s *keyDataSuite) testWriteAtomic(c *C, data *testWriteAtomicData) {
 
 func (s *keyDataSuite) TestWriteAtomic1(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
@@ -1074,8 +1143,8 @@ func (s *keyDataSuite) TestWriteAtomic1(c *C) {
 }
 
 type testReadKeyDataData struct {
-	key        DiskUnlockKey
-	auxKey     PrimaryKey
+	unlockKey  DiskUnlockKey
+	primaryKey PrimaryKey
 	id         KeyID
 	r          KeyDataReader
 	model      SnapModel
@@ -1091,35 +1160,40 @@ func (s *keyDataSuite) testReadKeyData(c *C, data *testReadKeyDataData) {
 	c.Check(err, IsNil)
 	c.Check(id, DeepEquals, data.id)
 
-	key, auxKey, err := keyData.RecoverKeys()
+	unlockKey, primaryKey, err := keyData.RecoverKeys()
 	c.Check(err, IsNil)
-	c.Check(key, DeepEquals, data.key)
-	c.Check(auxKey, DeepEquals, data.auxKey)
+	c.Check(unlockKey, DeepEquals, data.unlockKey)
+	c.Check(primaryKey, DeepEquals, data.primaryKey)
 
-	authorized, err := keyData.IsSnapModelAuthorized(auxKey, data.model)
-	c.Check(err, IsNil)
-	c.Check(authorized, Equals, data.authorized)
+	if s.Version == 1 {
+		authorized, err := keyData.IsSnapModelAuthorized(primaryKey, data.model)
+		c.Check(err, IsNil)
+		c.Check(authorized, Equals, data.authorized)
 
-	c.Check(keyData.SetAuthorizedSnapModels(auxKey), IsNil)
+		c.Check(keyData.SetAuthorizedSnapModels(primaryKey), IsNil)
+	}
 }
 
 func (s *keyDataSuite) TestReadKeyData1(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, unlockKey := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, unlockKey := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
 
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	var models []SnapModel
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
 
-	c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
+		c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData.WriteAtomic(w), IsNil)
@@ -1127,32 +1201,41 @@ func (s *keyDataSuite) TestReadKeyData1(c *C) {
 	id, err := keyData.UniqueID()
 	c.Check(err, IsNil)
 
-	s.testReadKeyData(c, &testReadKeyDataData{
-		key:        unlockKey,
-		auxKey:     primaryKey,
+	params := &testReadKeyDataData{
+		unlockKey:  unlockKey,
+		primaryKey: primaryKey,
 		id:         id,
 		r:          &mockKeyDataReader{"foo", w.Reader()},
-		model:      models[0],
-		authorized: true})
+	}
+
+	if s.Version == 1 {
+		params.model = models[0]
+		params.authorized = true
+	}
+
+	s.testReadKeyData(c, params)
 }
 
 func (s *keyDataSuite) TestReadKeyData2(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, unlockKey := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, unlockKey := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
 
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	var models []SnapModel
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
 
-	c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
+		c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData.WriteAtomic(w), IsNil)
@@ -1160,39 +1243,48 @@ func (s *keyDataSuite) TestReadKeyData2(c *C) {
 	id, err := keyData.UniqueID()
 	c.Check(err, IsNil)
 
-	s.testReadKeyData(c, &testReadKeyDataData{
-		key:        unlockKey,
-		auxKey:     primaryKey,
+	params := &testReadKeyDataData{
+		unlockKey:  unlockKey,
+		primaryKey: primaryKey,
 		id:         id,
 		r:          &mockKeyDataReader{"bar", w.Reader()},
-		model:      models[0],
-		authorized: true})
+	}
+
+	if s.Version == 1 {
+		params.model = models[0]
+		params.authorized = true
+	}
+
+	s.testReadKeyData(c, params)
 }
 
 func (s *keyDataSuite) TestReadKeyData3(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, unlockKey := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, unlockKey := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
 
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "other-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	var models []SnapModel
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "other-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
 
-	c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
+		c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData.WriteAtomic(w), IsNil)
@@ -1200,32 +1292,40 @@ func (s *keyDataSuite) TestReadKeyData3(c *C) {
 	id, err := keyData.UniqueID()
 	c.Check(err, IsNil)
 
-	s.testReadKeyData(c, &testReadKeyDataData{
-		key:        unlockKey,
-		auxKey:     primaryKey,
+	params := &testReadKeyDataData{
+		unlockKey:  unlockKey,
+		primaryKey: primaryKey,
 		id:         id,
 		r:          &mockKeyDataReader{"foo", w.Reader()},
-		model:      models[1],
-		authorized: true})
+	}
+
+	if s.Version == 1 {
+		params.model = models[1]
+		params.authorized = true
+	}
+
+	s.testReadKeyData(c, params)
 }
 
 func (s *keyDataSuite) TestReadKeyData4(c *C) {
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, unlockKey := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, unlockKey := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
 
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	if s.Version == 1 {
+		models := []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
 
-	c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
+		c.Check(keyData.SetAuthorizedSnapModels(primaryKey, models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData.WriteAtomic(w), IsNil)
@@ -1233,26 +1333,40 @@ func (s *keyDataSuite) TestReadKeyData4(c *C) {
 	id, err := keyData.UniqueID()
 	c.Check(err, IsNil)
 
-	s.testReadKeyData(c, &testReadKeyDataData{
-		key:    unlockKey,
-		auxKey: primaryKey,
-		id:     id,
-		r:      &mockKeyDataReader{"foo", w.Reader()},
-		model: testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+	params := &testReadKeyDataData{
+		unlockKey:  unlockKey,
+		primaryKey: primaryKey,
+		id:         id,
+		r:          &mockKeyDataReader{"foo", w.Reader()},
+	}
+
+	if s.Version == 1 {
+		params.model = testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
 			"authority-id": "fake-brand",
 			"series":       "16",
 			"brand-id":     "fake-brand",
 			"model":        "other-model",
 			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
-		authorized: false})
+		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")
+
+		params.authorized = false
+	}
+
+	s.testReadKeyData(c, params)
 }
 
+// Legacy tests
 func (s *keyDataSuite) TestReadAndWriteWithUnsaltedKeyDigest(c *C) {
 	// Verify that we can read an old key data with an unsalted HMAC key
 	// digest. Also verify that writing it preserves the old format to
 	// prevent writing a new format key data that can't be read by an old
 	// initrd.
+
+	// don't run for keyDataLegacySuite
+	if s.Version == 1 {
+		return
+	}
+
 	auxKey := testutil.DecodeHexString(c, "8107f1c65c58934f0d59245d1d94d312ea803e69c8599a7bac8c67fe253232f2")
 	j := []byte(
 		`{` +
@@ -1304,9 +1418,14 @@ func (s *keyDataSuite) TestReadAndWriteWithUnsaltedKeyDigest(c *C) {
 	c.Check(ok, testutil.IsTrue)
 }
 
-// Legacy tests
 func (s *keyDataSuite) TestReadAndWriteWithLegacySnapModelAuthKey(c *C) {
 	//key := testutil.DecodeHexString(c, "b813218b7877f83ef305ee5704310d05f8a0e648a0fe190dc229e17448cd91ec")
+
+	// don't run for keyDataLegacySuite
+	if s.Version == 1 {
+		return
+	}
+
 	auxKey := testutil.DecodeHexString(c, "67bb324dd1b40a41c5db84e6248fdacea2505e19fa954b96580b77fadff1a257")
 
 	j := []byte(
@@ -1366,6 +1485,12 @@ func (s *keyDataSuite) TestReadAndWriteWithLegacySnapModelAuthKey(c *C) {
 }
 
 func (s *keyDataSuite) TestLegacyKeyData(c *C) {
+
+	// don't run for keyDataLegacySuite
+	if s.Version == 1 {
+		return
+	}
+
 	unlockKey := testutil.DecodeHexString(c, "09a2e672131045221284e026b17de93b395581e82450a01e170150432f8cdf81")
 	primaryKey := testutil.DecodeHexString(c, "1850fbecbe8b3db83a894cb975756c8b69086040f097b03bd4f3b1a3e19c4b86")
 
@@ -1485,4 +1610,48 @@ func (s *keyDataSuite) TestMakeDiskUnlockKey(c *C) {
 	var u []byte
 	c.Assert(st.ReadASN1Bytes(&u, cryptobyte_asn1.OCTET_STRING), Equals, true)
 	c.Check(u, DeepEquals, unique)
+}
+
+type keyDataLegacySuite struct {
+	keyDataSuite
+}
+
+func (s *keyDataLegacySuite) SetUpSuite(c *C) {
+	s.keyDataSuite.SetUpSuite(c)
+	s.Version = 1
+}
+
+func (s *keyDataLegacySuite) SetUpTest(c *C) {
+	s.AddCleanup(MockReadKeyData(s.keyDataTestBase.Version))
+}
+
+var _ = Suite(&keyDataLegacySuite{})
+
+type testLegacyKeyPayloadData struct {
+	key    DiskUnlockKey
+	auxKey PrimaryKey
+}
+
+func (s *keyDataLegacySuite) testKeyPayload(c *C, data *testKeyPayloadData) {
+	unlockKey := data.unique
+	primaryKey := data.primary
+
+	payload := MarshalKeys(unlockKey, primaryKey)
+
+	key, auxKey, err := UnmarshalV1KeyPayload(payload)
+	c.Check(err, IsNil)
+	c.Check(key, DeepEquals, unlockKey)
+	c.Check(auxKey, DeepEquals, primaryKey)
+}
+
+func (s *keyDataLegacySuite) TestRecoverKeysWithPassphraseAuthModeNone(c *C) {
+	auxKey := s.newPrimaryKey(c, 32)
+	protected, _ := s.mockProtectKeys(c, auxKey)
+
+	keyData, err := NewKeyData(protected)
+	c.Assert(err, IsNil)
+	recoveredKey, recoveredAuxKey, err := keyData.RecoverKeysWithPassphrase("", nil)
+	c.Check(err, ErrorMatches, "cannot recover key with passphrase")
+	c.Check(recoveredKey, IsNil)
+	c.Check(recoveredAuxKey, IsNil)
 }

@@ -492,7 +492,8 @@ func (s *cryptSuite) checkKeyDataKeysInKeyring(c *C, prefix, path string, expect
 func (s *cryptSuite) newMultipleNamedKeyData(c *C, names ...string) (keyData []*KeyData, keys []DiskUnlockKey, primaryKeys []PrimaryKey) {
 	for _, name := range names {
 		primaryKey := s.keyDataTestBase.newPrimaryKey(c, 32)
-		protected, unlockKey := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+
+		protected, unlockKey := s.mockProtectKeys(c, primaryKey)
 
 		kd, err := NewKeyData(protected)
 		c.Assert(err, IsNil)
@@ -520,7 +521,8 @@ func (s *cryptSuite) newNamedKeyData(c *C, name string) (*KeyData, DiskUnlockKey
 func (s *cryptSuite) newMultipleNamedKeyDataWithPassphrases(c *C, passphrases []string, kdf KDF, names ...string) (keyData []*KeyData, keys []DiskUnlockKey, primaryKeys []PrimaryKey) {
 	for i, name := range names {
 		primaryKey := s.keyDataTestBase.newPrimaryKey(c, 32)
-		protected, unlockKey := s.mockProtectKeysWithPassphrase(c, primaryKey, kdf, nil, 32, crypto.SHA256)
+
+		protected, unlockKey := s.mockProtectKeysWithPassphrase(c, primaryKey, kdf, nil, 32)
 
 		kd, err := NewKeyDataWithPassphrase(protected, passphrases[i], kdf)
 		c.Assert(err, IsNil)
