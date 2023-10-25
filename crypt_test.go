@@ -3872,6 +3872,7 @@ func (s *cryptSuiteUnmockedBase) testAddLUKS2ContainerRecoveryKey(c *C, data *te
 		elapsed := time.Now().Sub(start)
 
 		// Check KDF time here with +/-20% tolerance and additional 500ms for cryptsetup exec and other activities
+		// TODO this one is flaky and fails some times
 		c.Check(int(elapsed/time.Millisecond), snapd_testutil.IntGreaterThan, int(float64(expectedKDFTime/time.Millisecond)*0.8))
 		c.Check(int(elapsed/time.Millisecond), snapd_testutil.IntLessThan, int(float64(expectedKDFTime/time.Millisecond)*1.2)+500)
 	}
