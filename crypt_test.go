@@ -920,7 +920,7 @@ func (s *cryptSuite) testActivateVolumeWithKeyData(c *C, data *testActivateVolum
 }
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData1(c *C) {
-	models := []SnapModel{SkipSnapModelCheck}
+	models := []SnapModel{nil}
 
 	if s.Version == 1 {
 		models = []SnapModel{
@@ -942,7 +942,7 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData1(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData2(c *C) {
 	// Test with different volumeName / sourceDevicePath
-	models := []SnapModel{SkipSnapModelCheck}
+	models := []SnapModel{nil}
 
 	if s.Version == 1 {
 		models = []SnapModel{
@@ -964,7 +964,7 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData2(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData3(c *C) {
 	// Test with different authorized models
-	models := []SnapModel{SkipSnapModelCheck}
+	models := []SnapModel{nil}
 
 	if s.Version == 1 {
 		models = []SnapModel{
@@ -1006,7 +1006,7 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData5(c *C) {
 		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
 	}
 
-	models := []SnapModel{SkipSnapModelCheck}
+	models := []SnapModel{nil}
 
 	if s.Version == 1 {
 		models = []SnapModel{
@@ -1036,7 +1036,7 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData6(c *C) {
 		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
 	}
 
-	models := []SnapModel{SkipSnapModelCheck}
+	models := []SnapModel{nil}
 
 	if s.Version == 1 {
 		models = []SnapModel{
@@ -1061,7 +1061,7 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData6(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData7(c *C) {
 	// Test with LUKS token
-	models := []SnapModel{SkipSnapModelCheck}
+	models := []SnapModel{nil}
 
 	if s.Version == 1 {
 		models = []SnapModel{
@@ -1090,7 +1090,7 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData8(c *C) {
 		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
 	}
 
-	models := []SnapModel{SkipSnapModelCheck}
+	models := []SnapModel{nil}
 
 	if s.Version == 1 {
 		models = []SnapModel{
@@ -1119,7 +1119,7 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData9(c *C) {
 	// Test with LUKS token and keyslot != 0
 	s.addMockKeyslot("/dev/sda1", nil) // add an empty slot
 
-	models := []SnapModel{SkipSnapModelCheck}
+	models := []SnapModel{nil}
 
 	if s.Version == 1 {
 		models = []SnapModel{
@@ -1449,6 +1449,10 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling14(c *C) {
 	// Test with an invalid value for SnapModel
 	keyData, _, _ := s.newNamedKeyData(c, "")
 
+	if s.Version != 1 {
+		c.Skip("Keydata versions > 1 don't support model authorization. This behaviour should now be tested in a per-platform basis.")
+	}
+
 	c.Check(s.testActivateVolumeWithKeyDataErrorHandling(c, &testActivateVolumeWithKeyDataErrorHandlingData{
 		keyData: keyData,
 	}), ErrorMatches, "nil Model")
@@ -1540,7 +1544,7 @@ func (s *cryptSuite) testActivateVolumeWithMultipleKeyData(c *C, data *testActiv
 	authRequestor := &mockAuthRequestor{passphraseResponses: data.authResponses}
 
 	if s.Version != 1 {
-		data.model = SkipSnapModelCheck
+		data.model = nil
 	}
 
 	var kdf testutil.MockKDF
@@ -2529,6 +2533,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling13(c *C) 
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling14(c *C) {
 	// Test with an invalid value for SnapModel.
+
+	if s.Version != 1 {
+		c.Skip("Keydata versions > 1 don't support model authorization. This behaviour should now be tested in a per-platform basis.")
+	}
+
 	keyData, _, _ := s.newMultipleNamedKeyData(c, "", "")
 
 	c.Check(s.testActivateVolumeWithMultipleKeyDataErrorHandling(c, &testActivateVolumeWithMultipleKeyDataErrorHandlingData{

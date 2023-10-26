@@ -948,8 +948,13 @@ type testSnapModelAuthData struct {
 }
 
 func (s *keyDataSuite) testSnapModelAuth(c *C, data *testSnapModelAuthData) {
+
+	if s.Version != 1 {
+		c.Skip("Snap model authorization checks are done per-platform now.")
+	}
+
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
@@ -1100,7 +1105,7 @@ func (s *keyDataSuite) TestSetAuthorizedSnapModelsWithWrongKey(c *C) {
 	}
 
 	primaryKey := s.newPrimaryKey(c, 32)
-	protected, _ := s.mockProtectKeys(c, primaryKey, crypto.SHA256)
+	protected, _ := s.mockProtectKeys(c, primaryKey)
 
 	keyData, err := NewKeyData(protected)
 	c.Assert(err, IsNil)
