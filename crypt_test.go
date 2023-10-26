@@ -21,7 +21,6 @@ package secboot_test
 
 import (
 	"bytes"
-	"crypto"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -429,13 +428,18 @@ func (s *cryptSuite) SetUpTest(c *C) {
 
 	s.handler.passphraseSupport = true
 
-	s.AddCleanup(pathstest.MockRunDir(c.MkDir()))
+	s.KeyringTestBase.AddCleanup(pathstest.MockRunDir(c.MkDir()))
 
 	s.luks2 = &mockLUKS2{
 		devices:   make(map[string]*mockLUKS2Container),
 		activated: make(map[string]string)}
 
-	s.AddCleanup(s.luks2.enableMocks())
+	s.KeyringTestBase.AddCleanup(s.luks2.enableMocks())
+}
+
+func (s *cryptSuite) TearDownTest(c *C) {
+	s.keyDataTestBase.TearDownTest(c)
+	s.KeyringTestBase.TearDownTest(c)
 }
 
 func (s *cryptSuite) addMockToken(path string, token luks2.Token) int {
@@ -859,14 +863,18 @@ func (s *cryptSuite) testActivateVolumeWithKeyData(c *C, data *testActivateVolum
 	var primaryKey PrimaryKey
 	var keyData *KeyData
 	var kdf testutil.MockKDF
+
 	if data.passphrase != "" {
 		keyData, unlockKey, primaryKey = s.newNamedKeyDataWithPassphrase(c, data.passphrase, &kdf, "")
 	} else {
 		keyData, unlockKey, primaryKey = s.newNamedKeyData(c, "")
 	}
+
 	slot := s.addMockKeyslot(data.sourceDevicePath, unlockKey)
 
-	c.Check(keyData.SetAuthorizedSnapModels(primaryKey, data.authorizedModels...), IsNil)
+	if s.Version == 1 {
+		c.Check(keyData.SetAuthorizedSnapModels(primaryKey, data.authorizedModels...), IsNil)
+	}
 
 	authRequestor := &mockAuthRequestor{passphraseResponses: data.authResponses}
 
@@ -912,14 +920,18 @@ func (s *cryptSuite) testActivateVolumeWithKeyData(c *C, data *testActivateVolum
 }
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData1(c *C) {
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{SkipSnapModelCheck}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -930,14 +942,18 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData1(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData2(c *C) {
 	// Test with different volumeName / sourceDevicePath
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{SkipSnapModelCheck}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -948,21 +964,25 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData2(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData3(c *C) {
 	// Test with different authorized models
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "other-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{SkipSnapModelCheck}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "other-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -981,14 +1001,23 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData4(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData5(c *C) {
 	// Test with passphrase
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
+	models := []SnapModel{SkipSnapModelCheck}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		passphrase:       "1234",
@@ -1002,14 +1031,23 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData5(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData6(c *C) {
 	// Test with passphrase using multiple tries
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
+	models := []SnapModel{SkipSnapModelCheck}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		passphrase:       "1234",
@@ -1023,14 +1061,18 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData6(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData7(c *C) {
 	// Test with LUKS token
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{SkipSnapModelCheck}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -1043,14 +1085,23 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData7(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData8(c *C) {
 	// Test with LUKS token with passphrase
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
+	models := []SnapModel{SkipSnapModelCheck}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -1068,14 +1119,18 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData9(c *C) {
 	// Test with LUKS token and keyslot != 0
 	s.addMockKeyslot("/dev/sda1", nil) // add an empty slot
 
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{SkipSnapModelCheck}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -1313,6 +1368,11 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling9(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling10(c *C) {
 	// Test that recovery key fallback works if the wrong passphrase is supplied.
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	keyData, key, _ := s.newNamedKeyDataWithPassphrase(c, "1234", &kdf, "foo")
 	recoveryKey := s.newRecoveryKey()
@@ -1358,6 +1418,11 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling12(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling13(c *C) {
 	// Test that activation fails if the supplied passphrase and recovery key are incorrect
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	keyData, key, _ := s.newNamedKeyDataWithPassphrase(c, "1234", &kdf, "bar")
 	recoveryKey := s.newRecoveryKey()
@@ -1391,8 +1456,19 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling14(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling15(c *C) {
 	// Test that activation fails if the supplied model is not authorized
+	// Allow this to run for newer keys but check for the keydata_legacy.go
+	// SetAuthorizedSnapModels error.
 	keyData, key, _ := s.newNamedKeyData(c, "foo")
 	recoveryKey := s.newRecoveryKey()
+
+	var errMsg string
+
+	switch s.Version {
+	case 1:
+		errMsg = "- foo: snap model is not authorized\n"
+	default:
+		errMsg = "- foo: cannot check if snap model is authorized: unsupported key data version\n"
+	}
 
 	c.Check(s.testActivateVolumeWithKeyDataErrorHandling(c, &testActivateVolumeWithKeyDataErrorHandlingData{
 		primaryKey:       key,
@@ -1408,12 +1484,17 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling15(c *C) {
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
 		activateTries: 0,
 	}), ErrorMatches, "cannot activate with platform protected keys:\n"+
-		"- foo: snap model is not authorized\n"+
+		errMsg+
 		"and activation with recovery key failed: no recovery key tries permitted")
 }
 
 func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling16(c *C) {
 	// Test that error in authRequestor error surfaces
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	keyData, key, _ := s.newNamedKeyDataWithPassphrase(c, "1234", &kdf, "bar")
 	recoveryKey := s.newRecoveryKey()
@@ -1458,6 +1539,10 @@ func (s *cryptSuite) testActivateVolumeWithMultipleKeyData(c *C, data *testActiv
 
 	authRequestor := &mockAuthRequestor{passphraseResponses: data.authResponses}
 
+	if s.Version != 1 {
+		data.model = SkipSnapModelCheck
+	}
+
 	var kdf testutil.MockKDF
 	options := &ActivateVolumeOptions{
 		PassphraseTries: data.passphraseTries,
@@ -1493,8 +1578,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData1(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1519,8 +1607,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData2(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1545,8 +1636,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData3(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys[1:],
@@ -1561,6 +1655,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData3(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData4(c *C) {
 	// Test with 2 keys that have a passphrase set, using the first key for activation.
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	passphrases := []string{"1234", "5678"}
 	keyData, keys, auxKeys := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "", "")
@@ -1573,8 +1672,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData4(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1591,6 +1693,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData4(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData5(c *C) {
 	// Test with 2 keys that have a passphrase set, using the second key for activation.
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	passphrases := []string{"1234", "5678"}
 	keyData, keys, auxKeys := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "", "")
@@ -1603,8 +1710,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData5(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1622,6 +1732,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData5(c *C) {
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData6(c *C) {
 	// Test with 2 keys where one has a passphrase set. The one without the passphrase
 	// should be used first.
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	keyData1, unlockKey1, primaryKey1 := s.newNamedKeyDataWithPassphrase(c, "1234", &kdf, "")
 	keyData2, unlockKey2, primaryKey2 := s.newNamedKeyData(c, "")
@@ -1638,8 +1753,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData6(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(primaryKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(primaryKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(primaryKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(primaryKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             unlockKeys,
@@ -1656,6 +1774,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData6(c *C) {
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData7(c *C) {
 	// Test with 2 keys that have a passphrase set, using the second key for activation
 	// after more than one attempt.
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	passphrases := []string{"1234", "5678"}
 	keyData, keys, auxKeys := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "", "")
@@ -1668,8 +1791,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData7(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1688,6 +1814,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData8(c *C) {
 	// Test with 2 keys where one has a passphrase set. Activation fails with
 	// the key that doesn't have a passphrase set, so activation should happen
 	// with the key that has a passphrase set.
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	keyData1, unlockKey1, primaryKey1 := s.newNamedKeyData(c, "")
 	keyData2, unlockKey2, primaryKey2 := s.newNamedKeyDataWithPassphrase(c, "5678", &kdf, "")
@@ -1704,8 +1835,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData8(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(primaryKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(primaryKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(primaryKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(primaryKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             unlockKeys[1:],
@@ -1725,6 +1859,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData9(c *C) {
 	// second key should be used for activation.
 	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "", "")
 
+	if s.Version != 1 {
+		c.Skip("Keydata versions > 1 don't support model authorization. This behaviour should now be tested in a per-platform basis.")
+	}
+
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
 			"authority-id": "fake-brand",
@@ -1741,8 +1879,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData9(c *C) {
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
 	}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models[0]), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models[1]), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models[0]), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models[1]), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1766,8 +1907,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData10(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1794,7 +1938,9 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData11(c *C) {
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
 
 	for i := range keyData {
-		c.Check(keyData[i].SetAuthorizedSnapModels(auxKeys[i], models...), IsNil)
+		if s.Version == 1 {
+			c.Check(keyData[i].SetAuthorizedSnapModels(auxKeys[i], models...), IsNil)
+		}
 
 		w := makeMockKeyDataWriter()
 		c.Check(keyData[i].WriteAtomic(w), IsNil)
@@ -1831,8 +1977,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData13(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData[0].WriteAtomic(w), IsNil)
@@ -1860,6 +2009,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData14(c *C) {
 	// Test unauthorized external keyData with authorized LUKS keyData
 	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "luks", "external")
 
+	if s.Version != 1 {
+		c.Skip("Keydata versions > 1 don't support model authorization. This behaviour should now be tested in a per-platform basis.")
+	}
+
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
 			"authority-id": "fake-brand",
@@ -1868,7 +2021,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData14(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData[0].WriteAtomic(w), IsNil)
@@ -1912,7 +2068,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData15(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData.SetAuthorizedSnapModels(auxKey, models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData.SetAuthorizedSnapModels(auxKey, models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             []DiskUnlockKey{key},
@@ -1946,7 +2105,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData16(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData.SetAuthorizedSnapModels(auxKey, models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData.SetAuthorizedSnapModels(auxKey, models...), IsNil)
+	}
 
 	stderr := new(bytes.Buffer)
 	restore := MockStderr(stderr)
@@ -1980,8 +2142,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData17(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	for i, kd := range keyData {
 		w := makeMockKeyDataWriter()
@@ -2020,8 +2185,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData18(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData[1].WriteAtomic(w), IsNil)
@@ -2278,6 +2446,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling9(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling10(c *C) {
 	// Test that recovery key fallback works if the wrong passphrase is supplied.
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	passphrases := []string{"1234", "1234"}
 	keyData, keys, _ := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "foo", "bar")
@@ -2325,6 +2498,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling12(c *C) 
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling13(c *C) {
 	// Test that activation fails if the supplied passphrase and recovery key are incorrect
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
 	var kdf testutil.MockKDF
 	passphrases := []string{"1234", "1234"}
 	keyData, keys, _ := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "foo", "bar")
@@ -2357,10 +2535,22 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling14(c *C) 
 		keyData: keyData,
 	}), ErrorMatches, "nil Model")
 }
+
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling15(c *C) {
 	// Test with an unauthorized snap model.
+	// Allow this to run for newer keys but check for the keydata_legacy.go
+	// SetAuthorizedSnapModels error.
 	keyData, keys, _ := s.newMultipleNamedKeyData(c, "foo", "bar")
 	recoveryKey := s.newRecoveryKey()
+
+	var errMsg string
+
+	switch s.Version {
+	case 1:
+		errMsg = "snap model is not authorized\n"
+	default:
+		errMsg = "cannot check if snap model is authorized: unsupported key data version\n"
+	}
 
 	c.Check(s.testActivateVolumeWithMultipleKeyDataErrorHandling(c, &testActivateVolumeWithMultipleKeyDataErrorHandlingData{
 		keys:        keys,
@@ -2376,8 +2566,8 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling15(c *C) 
 		recoveryKeyTries: 0,
 		activateTries:    0,
 	}), ErrorMatches, "cannot activate with platform protected keys:\n"+
-		"- foo: snap model is not authorized\n"+
-		"- bar: snap model is not authorized\n"+
+		"- foo: "+errMsg+
+		"- bar: "+errMsg+
 		"and activation with recovery key failed: no recovery key tries permitted")
 }
 
@@ -4083,4 +4273,16 @@ func (s *cryptSuiteUnmocked) TestRenameLUKS2ContainerRecoveryKey(c *C) {
 			TokenBase: luksview.TokenBase{
 				TokenName:    "bar",
 				TokenKeyslot: 1}}})
+}
+
+type cryptLegacySuite struct {
+	cryptSuite
+}
+
+var _ = Suite(&cryptLegacySuite{})
+
+func (s *cryptLegacySuite) SetUpTest(c *C) {
+	s.cryptSuite.SetUpTest(c)
+	s.Version = 1
+	s.keyDataTestBase.AddCleanup(MockReadKeyData(s.Version))
 }
