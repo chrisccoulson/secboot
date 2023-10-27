@@ -20,20 +20,9 @@
 package bootenv
 
 import (
-	"sync/atomic"
+	"testing"
 
-	"github.com/snapcore/secboot"
+	. "gopkg.in/check.v1"
 )
 
-var (
-	currentModel    atomic.Value
-	currentBootMode atomic.Value
-)
-
-var SetModel = func(model secboot.SnapModel) bool {
-	return currentModel.CompareAndSwap(nil, model)
-}
-
-var SetBootMode = func(mode string) bool {
-	return currentBootMode.CompareAndSwap(nil, mode)
-}
+func Test(t *testing.T) { TestingT(t) }
