@@ -332,7 +332,7 @@ func (l *mockLUKS2) importToken(devicePath string, token luks2.Token, options *l
 	return nil
 }
 
-func (l *mockLUKS2) killSlot(devicePath string, slot int, key []byte) error {
+func (l *mockLUKS2) killSlot(devicePath string, slot int) error {
 	l.operations = append(l.operations, fmt.Sprint("KillSlot(", devicePath, ",", slot, ")"))
 
 	if slot < 0 {
@@ -346,26 +346,6 @@ func (l *mockLUKS2) killSlot(devicePath string, slot int, key []byte) error {
 
 	if _, exists := dev.keyslots[slot]; !exists {
 		return errors.New("no slot")
-	}
-
-	if len(dev.keyslots) == 1 {
-		if !bytes.Equal(key, dev.keyslots[slot]) {
-			return errors.New("invalid key")
-		}
-	} else {
-		found := false
-		for i, k := range dev.keyslots {
-			if i == slot {
-				continue
-			}
-			if bytes.Equal(key, k) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return errors.New("invalid key")
-		}
 	}
 
 	delete(dev.keyslots, slot)
@@ -3402,7 +3382,6 @@ type testDeleteLUKS2ContainerKeyData struct {
 	devicePath  string
 	dev         *mockLUKS2Container
 	keyslotName string
-	existingKey []byte
 	slot        int
 	tokenId     int
 }
@@ -3410,7 +3389,7 @@ type testDeleteLUKS2ContainerKeyData struct {
 func (s *cryptSuite) testDeleteLUKS2ContainerKey(c *C, data *testDeleteLUKS2ContainerKeyData) {
 	s.luks2.devices[data.devicePath] = data.dev
 
-	c.Check(DeleteLUKS2ContainerKey(data.devicePath, data.keyslotName, data.existingKey), IsNil)
+	c.Check(DeleteLUKS2ContainerKey(data.devicePath, data.keyslotName), IsNil)
 
 	c.Check(s.luks2.operations, DeepEquals, []string{
 		"newLUKSView(" + data.devicePath + ",0)",
@@ -3420,8 +3399,6 @@ func (s *cryptSuite) testDeleteLUKS2ContainerKey(c *C, data *testDeleteLUKS2Cont
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKey(c *C) {
-	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
-
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/sda1",
 		dev: &mockLUKS2Container{
@@ -3436,20 +3413,17 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKey(c *C) {
 						TokenName:    "default-recovery"}},
 			},
 			keyslots: map[int][]byte{
-				0: existingKey,
+				0: nil,
 				1: nil,
 			},
 		},
 		keyslotName: "default-recovery",
-		existingKey: existingKey,
 		slot:        1,
 		tokenId:     1,
 	})
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentPath(c *C) {
-	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
-
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/nvme0n1p1",
 		dev: &mockLUKS2Container{
@@ -3464,20 +3438,17 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentPath(c *C) {
 						TokenName:    "default-recovery"}},
 			},
 			keyslots: map[int][]byte{
-				0: existingKey,
+				0: nil,
 				1: nil,
 			},
 		},
 		keyslotName: "default-recovery",
-		existingKey: existingKey,
 		slot:        1,
 		tokenId:     1,
 	})
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentName(c *C) {
-	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
-
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/sda1",
 		dev: &mockLUKS2Container{
@@ -3492,20 +3463,17 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentName(c *C) {
 						TokenName:    "foo"}},
 			},
 			keyslots: map[int][]byte{
-				0: existingKey,
+				0: nil,
 				1: nil,
 			},
 		},
 		keyslotName: "foo",
-		existingKey: existingKey,
 		slot:        1,
 		tokenId:     1,
 	})
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentKeyslot(c *C) {
-	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
-
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/sda1",
 		dev: &mockLUKS2Container{
@@ -3520,20 +3488,17 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentKeyslot(c *C) {
 						TokenName:    "default-recovery"}},
 			},
 			keyslots: map[int][]byte{
-				0: existingKey,
+				0: nil,
 				2: nil,
 			},
 		},
 		keyslotName: "default-recovery",
-		existingKey: existingKey,
 		slot:        2,
 		tokenId:     1,
 	})
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentTokenId(c *C) {
-	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
-
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/sda1",
 		dev: &mockLUKS2Container{
@@ -3548,20 +3513,17 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentTokenId(c *C) {
 						TokenName:    "default-recovery"}},
 			},
 			keyslots: map[int][]byte{
-				0: existingKey,
+				0: nil,
 				1: nil,
 			},
 		},
 		keyslotName: "default-recovery",
-		existingKey: existingKey,
 		slot:        1,
 		tokenId:     4,
 	})
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyLastSlot(c *C) {
-	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
-
 	s.luks2.devices["/dev/sda1"] = &mockLUKS2Container{
 		tokens: map[int]luks2.Token{
 			0: &luksview.KeyDataToken{
@@ -3569,10 +3531,10 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyLastSlot(c *C) {
 					TokenKeyslot: 0,
 					TokenName:    "default"}},
 		},
-		keyslots: map[int][]byte{0: existingKey},
+		keyslots: map[int][]byte{0: nil},
 	}
 
-	c.Check(DeleteLUKS2ContainerKey("/dev/sda1", "default", ([]byte)(existingKey)), ErrorMatches, "cannot kill last remaining slot")
+	c.Check(DeleteLUKS2ContainerKey("/dev/sda1", "default"), ErrorMatches, "cannot kill last remaining slot")
 }
 
 type testRenameLUKS2ContainerKeyData struct {
@@ -4130,10 +4092,7 @@ func (s *cryptSuiteUnmockedExpensive) TestListLUKS2ContainerKeyName(c *C) {
 }
 
 type testDeleteLUKS2ContainerKeyUnmockedData struct {
-	key                   DiskUnlockKey
-	recoveryKey           RecoveryKey
 	name                  string
-	existingKey           DiskUnlockKey
 	expectedUnlockNames   []string
 	expectedRecoveryNames []string
 	expectedToken         luks2.Token
@@ -4142,13 +4101,14 @@ type testDeleteLUKS2ContainerKeyUnmockedData struct {
 func (s *cryptSuiteUnmocked) testDeleteLUKS2ContainerKey(c *C, data *testDeleteLUKS2ContainerKeyUnmockedData) {
 	path := luks2test.CreateEmptyDiskImage(c, 20)
 
-	c.Check(InitializeLUKS2Container(path, "data", data.key, nil), IsNil)
+	key := s.newPrimaryKey()
+	c.Check(InitializeLUKS2Container(path, "data", key, nil), IsNil)
 
 	var recoveryKey RecoveryKey
 	rand.Read(recoveryKey[:])
-	c.Check(AddLUKS2ContainerRecoveryKey(path, "", data.key, data.recoveryKey, &KDFOptions{MemoryKiB: 32, ForceIterations: 4}), IsNil)
+	c.Check(AddLUKS2ContainerRecoveryKey(path, "", key, recoveryKey, &KDFOptions{MemoryKiB: 32, ForceIterations: 4}), IsNil)
 
-	c.Check(DeleteLUKS2ContainerKey(path, data.name, data.existingKey), IsNil)
+	c.Check(DeleteLUKS2ContainerKey(path, data.name), IsNil)
 
 	names, err := ListLUKS2ContainerUnlockKeyNames(path)
 	c.Check(err, IsNil)
@@ -4176,14 +4136,8 @@ func (s *cryptSuiteUnmocked) testDeleteLUKS2ContainerKey(c *C, data *testDeleteL
 }
 
 func (s *cryptSuiteUnmocked) TestDeleteLUKS2ContainerKey1(c *C) {
-	key := s.newPrimaryKey()
-	recoveryKey := s.newRecoveryKey()
-
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyUnmockedData{
-		key:                   key,
-		recoveryKey:           recoveryKey,
 		name:                  "default",
-		existingKey:           DiskUnlockKey(recoveryKey[:]),
 		expectedRecoveryNames: []string{"default-recovery"},
 		expectedToken: &luksview.RecoveryToken{
 			TokenBase: luksview.TokenBase{
@@ -4192,14 +4146,8 @@ func (s *cryptSuiteUnmocked) TestDeleteLUKS2ContainerKey1(c *C) {
 }
 
 func (s *cryptSuiteUnmocked) TestDeleteLUKS2ContainerKey2(c *C) {
-	key := s.newPrimaryKey()
-	recoveryKey := s.newRecoveryKey()
-
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyUnmockedData{
-		key:                 key,
-		recoveryKey:         recoveryKey,
 		name:                "default-recovery",
-		existingKey:         key,
 		expectedUnlockNames: []string{"default"},
 		expectedToken: &luksview.KeyDataToken{
 			TokenBase: luksview.TokenBase{
