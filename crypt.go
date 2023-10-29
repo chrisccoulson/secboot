@@ -148,7 +148,7 @@ func (s *activateWithKeyDataState) errors() (out []*activateWithKeyDataError) {
 	return out
 }
 
-func (s *activateWithKeyDataState) tryActivateWithRecoveredKey(key DiskUnlockKey, slot int, keyData *KeyData, auxKey AuxiliaryKey) error {
+func (s *activateWithKeyDataState) tryActivateWithRecoveredKey(key DiskUnlockKey, slot int, keyData *KeyData, auxKey PrimaryKey) error {
 	if s.model != SkipSnapModelCheck {
 		authorized, err := keyData.IsSnapModelAuthorized(auxKey, s.model)
 		switch {
@@ -430,7 +430,10 @@ func ActivateVolumeWithKeyData(volumeName, sourceDevicePath string, authRequesto
 		return errors.New("invalid RecoveryKeyTries")
 	}
 	if options.Model == nil {
-		return errors.New("nil Model")
+		if keys != nil && keys[0].data.Version == 1 {
+			return errors.New("nil Model")
+		}
+		options.Model = SkipSnapModelCheck
 	}
 
 	if (options.PassphraseTries > 0 || options.RecoveryKeyTries > 0) && authRequestor == nil {

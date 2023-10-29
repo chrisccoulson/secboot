@@ -21,7 +21,6 @@ package secboot_test
 
 import (
 	"bytes"
-	"crypto"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -429,13 +428,18 @@ func (s *cryptSuite) SetUpTest(c *C) {
 
 	s.handler.passphraseSupport = true
 
-	s.AddCleanup(pathstest.MockRunDir(c.MkDir()))
+	s.KeyringTestBase.AddCleanup(pathstest.MockRunDir(c.MkDir()))
 
 	s.luks2 = &mockLUKS2{
 		devices:   make(map[string]*mockLUKS2Container),
 		activated: make(map[string]string)}
 
-	s.AddCleanup(s.luks2.enableMocks())
+	s.KeyringTestBase.AddCleanup(s.luks2.enableMocks())
+}
+
+func (s *cryptSuite) TearDownTest(c *C) {
+	s.keyDataTestBase.TearDownTest(c)
+	s.KeyringTestBase.TearDownTest(c)
 }
 
 func (s *cryptSuite) addMockToken(path string, token luks2.Token) int {
@@ -473,7 +477,7 @@ func (s *cryptSuite) checkRecoveryKeyInKeyring(c *C, prefix, path string, expect
 	c.Check(key, DeepEquals, DiskUnlockKey(expected[:]))
 }
 
-func (s *cryptSuite) checkKeyDataKeysInKeyring(c *C, prefix, path string, expectedKey DiskUnlockKey, expectedAuxKey AuxiliaryKey) {
+func (s *cryptSuite) checkKeyDataKeysInKeyring(c *C, prefix, path string, expectedKey DiskUnlockKey, expectedAuxKey PrimaryKey) {
 	// The following test will fail if the user keyring isn't reachable from the session keyring. If the test have succeeded
 	// so far, mark the current test as expected to fail.
 	if !s.ProcessPossessesUserKeyringKeys && !c.Failed() {
@@ -484,15 +488,16 @@ func (s *cryptSuite) checkKeyDataKeysInKeyring(c *C, prefix, path string, expect
 	c.Check(err, IsNil)
 	c.Check(key, DeepEquals, expectedKey)
 
-	auxKey, err := GetAuxiliaryKeyFromKernel(prefix, path, false)
+	auxKey, err := GetPrimaryKeyFromKernel(prefix, path, false)
 	c.Check(err, IsNil)
 	c.Check(auxKey, DeepEquals, expectedAuxKey)
 }
 
-func (s *cryptSuite) newMultipleNamedKeyData(c *C, names ...string) (keyData []*KeyData, keys []DiskUnlockKey, auxKeys []AuxiliaryKey) {
+func (s *cryptSuite) newMultipleNamedKeyData(c *C, names ...string) (keyData []*KeyData, keys []DiskUnlockKey, primaryKeys []PrimaryKey) {
 	for _, name := range names {
-		key, auxKey := s.newKeyDataKeys(c, 32, 32)
-		protected := s.mockProtectKeys(c, key, auxKey, crypto.SHA256)
+		primaryKey := s.keyDataTestBase.newPrimaryKey(c, 32)
+
+		protected, unlockKey := s.mockProtectKeys(c, primaryKey)
 
 		kd, err := NewKeyData(protected)
 		c.Assert(err, IsNil)
@@ -505,16 +510,46 @@ func (s *cryptSuite) newMultipleNamedKeyData(c *C, names ...string) (keyData []*
 		c.Assert(err, IsNil)
 
 		keyData = append(keyData, kd)
-		keys = append(keys, key)
-		auxKeys = append(auxKeys, auxKey)
+		keys = append(keys, unlockKey)
+		primaryKeys = append(primaryKeys, primaryKey)
 	}
 
-	return keyData, keys, auxKeys
+	return keyData, keys, primaryKeys
 }
 
-func (s *cryptSuite) newNamedKeyData(c *C, name string) (*KeyData, DiskUnlockKey, AuxiliaryKey) {
-	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, name)
-	return keyData[0], keys[0], auxKeys[0]
+func (s *cryptSuite) newNamedKeyData(c *C, name string) (*KeyData, DiskUnlockKey, PrimaryKey) {
+	keyData, unlockKeys, primaryKeys := s.newMultipleNamedKeyData(c, name)
+	return keyData[0], unlockKeys[0], primaryKeys[0]
+}
+
+func (s *cryptSuite) newMultipleNamedKeyDataWithPassphrases(c *C, passphrases []string, kdf KDF, names ...string) (keyData []*KeyData, keys []DiskUnlockKey, primaryKeys []PrimaryKey) {
+	for i, name := range names {
+		primaryKey := s.keyDataTestBase.newPrimaryKey(c, 32)
+
+		protected, unlockKey := s.mockProtectKeysWithPassphrase(c, primaryKey, kdf, nil, 32)
+
+		kd, err := NewKeyDataWithPassphrase(protected, passphrases[i], kdf)
+		c.Assert(err, IsNil)
+
+		w := makeMockKeyDataWriter()
+		c.Check(kd.WriteAtomic(w), IsNil)
+
+		r := &mockKeyDataReader{name, w.Reader()}
+		kd, err = ReadKeyData(r)
+		c.Assert(err, IsNil)
+
+		keyData = append(keyData, kd)
+		keys = append(keys, unlockKey)
+		primaryKeys = append(primaryKeys, primaryKey)
+	}
+
+	return keyData, keys, primaryKeys
+}
+
+func (s *cryptSuite) newNamedKeyDataWithPassphrase(c *C, passphrase string, kdf KDF, name string) (*KeyData, DiskUnlockKey, PrimaryKey) {
+	passphrases := []string{passphrase}
+	keyData, unlockKeys, primaryKeys := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, kdf, name)
+	return keyData[0], unlockKeys[0], primaryKeys[0]
 }
 
 type testActivateVolumeWithRecoveryKeyData struct {
@@ -824,17 +859,24 @@ type testActivateVolumeWithKeyDataData struct {
 
 func (s *cryptSuite) testActivateVolumeWithKeyData(c *C, data *testActivateVolumeWithKeyDataData) {
 	var err error
-	keyData, key, auxKey := s.newNamedKeyData(c, "")
-	slot := s.addMockKeyslot(data.sourceDevicePath, key)
+	var unlockKey DiskUnlockKey
+	var primaryKey PrimaryKey
+	var keyData *KeyData
+	var kdf testutil.MockKDF
 
-	c.Check(keyData.SetAuthorizedSnapModels(auxKey, data.authorizedModels...), IsNil)
+	if data.passphrase != "" {
+		keyData, unlockKey, primaryKey = s.newNamedKeyDataWithPassphrase(c, data.passphrase, &kdf, "")
+	} else {
+		keyData, unlockKey, primaryKey = s.newNamedKeyData(c, "")
+	}
+
+	slot := s.addMockKeyslot(data.sourceDevicePath, unlockKey)
+
+	if s.Version == 1 {
+		c.Check(keyData.SetAuthorizedSnapModels(primaryKey, data.authorizedModels...), IsNil)
+	}
 
 	authRequestor := &mockAuthRequestor{passphraseResponses: data.authResponses}
-
-	var kdf testutil.MockKDF
-	if data.passphrase != "" {
-		c.Check(keyData.SetPassphrase(data.passphrase, nil, &kdf), IsNil)
-	}
 
 	options := &ActivateVolumeOptions{
 		PassphraseTries: data.passphraseTries,
@@ -874,18 +916,22 @@ func (s *cryptSuite) testActivateVolumeWithKeyData(c *C, data *testActivateVolum
 	}
 
 	// This should be done last because it may fail in some circumstances.
-	s.checkKeyDataKeysInKeyring(c, data.keyringPrefix, data.sourceDevicePath, key, auxKey)
+	s.checkKeyDataKeysInKeyring(c, data.keyringPrefix, data.sourceDevicePath, unlockKey, primaryKey)
 }
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData1(c *C) {
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{nil}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -896,14 +942,18 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData1(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData2(c *C) {
 	// Test with different volumeName / sourceDevicePath
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{nil}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -914,21 +964,25 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData2(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData3(c *C) {
 	// Test with different authorized models
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "other-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{nil}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "other-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -947,14 +1001,23 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData4(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData5(c *C) {
 	// Test with passphrase
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
+	models := []SnapModel{nil}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		passphrase:       "1234",
@@ -968,14 +1031,23 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData5(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData6(c *C) {
 	// Test with passphrase using multiple tries
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
+	models := []SnapModel{nil}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		passphrase:       "1234",
@@ -989,14 +1061,18 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData6(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData7(c *C) {
 	// Test with LUKS token
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{nil}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -1009,14 +1085,23 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData7(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyData8(c *C) {
 	// Test with LUKS token with passphrase
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
+
+	models := []SnapModel{nil}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -1034,14 +1119,18 @@ func (s *cryptSuite) TestActivateVolumeWithKeyData9(c *C) {
 	// Test with LUKS token and keyslot != 0
 	s.addMockKeyslot("/dev/sda1", nil) // add an empty slot
 
-	models := []SnapModel{
-		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
-			"authority-id": "fake-brand",
-			"series":       "16",
-			"brand-id":     "fake-brand",
-			"model":        "fake-model",
-			"grade":        "secured",
-		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	models := []SnapModel{nil}
+
+	if s.Version == 1 {
+		models = []SnapModel{
+			testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
+				"authority-id": "fake-brand",
+				"series":       "16",
+				"brand-id":     "fake-brand",
+				"model":        "fake-model",
+				"grade":        "secured",
+			}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
+	}
 
 	s.testActivateVolumeWithKeyData(c, &testActivateVolumeWithKeyDataData{
 		authorizedModels: models,
@@ -1279,11 +1368,14 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling9(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling10(c *C) {
 	// Test that recovery key fallback works if the wrong passphrase is supplied.
-	keyData, key, _ := s.newNamedKeyData(c, "foo")
-	recoveryKey := s.newRecoveryKey()
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData.SetPassphrase("1234", nil, &kdf), IsNil)
+	keyData, key, _ := s.newNamedKeyDataWithPassphrase(c, "1234", &kdf, "foo")
+	recoveryKey := s.newRecoveryKey()
 
 	s.testActivateVolumeWithKeyDataErrorHandling(c, &testActivateVolumeWithKeyDataErrorHandlingData{
 		primaryKey:  key,
@@ -1326,11 +1418,14 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling12(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling13(c *C) {
 	// Test that activation fails if the supplied passphrase and recovery key are incorrect
-	keyData, key, _ := s.newNamedKeyData(c, "bar")
-	recoveryKey := s.newRecoveryKey()
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData.SetPassphrase("1234", nil, &kdf), IsNil)
+	keyData, key, _ := s.newNamedKeyDataWithPassphrase(c, "1234", &kdf, "bar")
+	recoveryKey := s.newRecoveryKey()
 
 	c.Check(s.testActivateVolumeWithKeyDataErrorHandling(c, &testActivateVolumeWithKeyDataErrorHandlingData{
 		primaryKey:  key,
@@ -1354,6 +1449,10 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling14(c *C) {
 	// Test with an invalid value for SnapModel
 	keyData, _, _ := s.newNamedKeyData(c, "")
 
+	if s.Version != 1 {
+		c.Skip("Keydata versions > 1 don't support model authorization. This behaviour should now be tested in a per-platform basis.")
+	}
+
 	c.Check(s.testActivateVolumeWithKeyDataErrorHandling(c, &testActivateVolumeWithKeyDataErrorHandlingData{
 		keyData: keyData,
 	}), ErrorMatches, "nil Model")
@@ -1361,8 +1460,19 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling14(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling15(c *C) {
 	// Test that activation fails if the supplied model is not authorized
+	// Allow this to run for newer keys but check for the keydata_legacy.go
+	// SetAuthorizedSnapModels error.
 	keyData, key, _ := s.newNamedKeyData(c, "foo")
 	recoveryKey := s.newRecoveryKey()
+
+	var errMsg string
+
+	switch s.Version {
+	case 1:
+		errMsg = "- foo: snap model is not authorized\n"
+	default:
+		errMsg = "- foo: cannot check if snap model is authorized: unsupported key data version\n"
+	}
 
 	c.Check(s.testActivateVolumeWithKeyDataErrorHandling(c, &testActivateVolumeWithKeyDataErrorHandlingData{
 		primaryKey:       key,
@@ -1378,17 +1488,20 @@ func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling15(c *C) {
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
 		activateTries: 0,
 	}), ErrorMatches, "cannot activate with platform protected keys:\n"+
-		"- foo: snap model is not authorized\n"+
+		errMsg+
 		"and activation with recovery key failed: no recovery key tries permitted")
 }
 
 func (s *cryptSuite) TestActivateVolumeWithKeyDataErrorHandling16(c *C) {
 	// Test that error in authRequestor error surfaces
-	keyData, key, _ := s.newNamedKeyData(c, "bar")
-	recoveryKey := s.newRecoveryKey()
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData.SetPassphrase("1234", nil, &kdf), IsNil)
+	keyData, key, _ := s.newNamedKeyDataWithPassphrase(c, "1234", &kdf, "bar")
+	recoveryKey := s.newRecoveryKey()
 
 	c.Check(s.testActivateVolumeWithKeyDataErrorHandling(c, &testActivateVolumeWithKeyDataErrorHandlingData{
 		primaryKey:  key,
@@ -1420,7 +1533,7 @@ type testActivateVolumeWithMultipleKeyDataData struct {
 	keyData       []*KeyData
 	activateSlots []int
 	validKey      DiskUnlockKey
-	validAuxKey   AuxiliaryKey
+	validAuxKey   PrimaryKey
 }
 
 func (s *cryptSuite) testActivateVolumeWithMultipleKeyData(c *C, data *testActivateVolumeWithMultipleKeyDataData) {
@@ -1429,6 +1542,10 @@ func (s *cryptSuite) testActivateVolumeWithMultipleKeyData(c *C, data *testActiv
 	}
 
 	authRequestor := &mockAuthRequestor{passphraseResponses: data.authResponses}
+
+	if s.Version != 1 {
+		data.model = nil
+	}
 
 	var kdf testutil.MockKDF
 	options := &ActivateVolumeOptions{
@@ -1465,8 +1582,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData1(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1491,8 +1611,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData2(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1517,8 +1640,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData3(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys[1:],
@@ -1533,11 +1659,14 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData3(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData4(c *C) {
 	// Test with 2 keys that have a passphrase set, using the first key for activation.
-	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "", "")
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData[0].SetPassphrase("1234", nil, &kdf), IsNil)
-	c.Check(keyData[1].SetPassphrase("5678", nil, &kdf), IsNil)
+	passphrases := []string{"1234", "5678"}
+	keyData, keys, auxKeys := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "", "")
 
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
@@ -1547,8 +1676,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData4(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1565,11 +1697,14 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData4(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData5(c *C) {
 	// Test with 2 keys that have a passphrase set, using the second key for activation.
-	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "", "")
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData[0].SetPassphrase("1234", nil, &kdf), IsNil)
-	c.Check(keyData[1].SetPassphrase("5678", nil, &kdf), IsNil)
+	passphrases := []string{"1234", "5678"}
+	keyData, keys, auxKeys := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "", "")
 
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
@@ -1579,8 +1714,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData5(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1598,10 +1736,18 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData5(c *C) {
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData6(c *C) {
 	// Test with 2 keys where one has a passphrase set. The one without the passphrase
 	// should be used first.
-	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "", "")
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData[0].SetPassphrase("1234", nil, &kdf), IsNil)
+	keyData1, unlockKey1, primaryKey1 := s.newNamedKeyDataWithPassphrase(c, "1234", &kdf, "")
+	keyData2, unlockKey2, primaryKey2 := s.newNamedKeyData(c, "")
+
+	keyData := []*KeyData{keyData1, keyData2}
+	unlockKeys := []DiskUnlockKey{unlockKey1, unlockKey2}
+	primaryKeys := []PrimaryKey{primaryKey1, primaryKey2}
 
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
@@ -1611,29 +1757,35 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData6(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(primaryKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(primaryKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
-		keys:             keys,
+		keys:             unlockKeys,
 		keyData:          keyData,
 		volumeName:       "data",
 		sourceDevicePath: "/dev/sda1",
 		passphraseTries:  1,
 		model:            models[0],
 		activateSlots:    []int{luks2.AnySlot},
-		validKey:         keys[1],
-		validAuxKey:      auxKeys[1]})
+		validKey:         unlockKeys[1],
+		validAuxKey:      primaryKeys[1]})
 }
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData7(c *C) {
 	// Test with 2 keys that have a passphrase set, using the second key for activation
 	// after more than one attempt.
-	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "", "")
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData[0].SetPassphrase("1234", nil, &kdf), IsNil)
-	c.Check(keyData[1].SetPassphrase("5678", nil, &kdf), IsNil)
+	passphrases := []string{"1234", "5678"}
+	keyData, keys, auxKeys := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "", "")
 
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
@@ -1643,8 +1795,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData7(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1663,10 +1818,18 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData8(c *C) {
 	// Test with 2 keys where one has a passphrase set. Activation fails with
 	// the key that doesn't have a passphrase set, so activation should happen
 	// with the key that has a passphrase set.
-	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "", "")
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData[1].SetPassphrase("5678", nil, &kdf), IsNil)
+	keyData1, unlockKey1, primaryKey1 := s.newNamedKeyData(c, "")
+	keyData2, unlockKey2, primaryKey2 := s.newNamedKeyDataWithPassphrase(c, "5678", &kdf, "")
+
+	keyData := []*KeyData{keyData1, keyData2}
+	unlockKeys := []DiskUnlockKey{unlockKey1, unlockKey2}
+	primaryKeys := []PrimaryKey{primaryKey1, primaryKey2}
 
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
@@ -1676,11 +1839,14 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData8(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(primaryKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(primaryKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
-		keys:             keys[1:],
+		keys:             unlockKeys[1:],
 		keyData:          keyData,
 		volumeName:       "data",
 		sourceDevicePath: "/dev/sda1",
@@ -1688,14 +1854,18 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData8(c *C) {
 		authResponses:    []interface{}{"5678"},
 		model:            models[0],
 		activateSlots:    []int{luks2.AnySlot, luks2.AnySlot},
-		validKey:         keys[1],
-		validAuxKey:      auxKeys[1]})
+		validKey:         unlockKeys[1],
+		validAuxKey:      primaryKeys[1]})
 }
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData9(c *C) {
 	// Try where the supplied model cannot be authorized via the first key - the
 	// second key should be used for activation.
 	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "", "")
+
+	if s.Version != 1 {
+		c.Skip("Keydata versions > 1 don't support model authorization. This behaviour should now be tested in a per-platform basis.")
+	}
 
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
@@ -1713,8 +1883,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData9(c *C) {
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij"),
 	}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models[0]), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models[1]), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models[0]), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models[1]), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1738,8 +1911,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData10(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             keys,
@@ -1766,7 +1942,9 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData11(c *C) {
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
 
 	for i := range keyData {
-		c.Check(keyData[i].SetAuthorizedSnapModels(auxKeys[i], models...), IsNil)
+		if s.Version == 1 {
+			c.Check(keyData[i].SetAuthorizedSnapModels(auxKeys[i], models...), IsNil)
+		}
 
 		w := makeMockKeyDataWriter()
 		c.Check(keyData[i].WriteAtomic(w), IsNil)
@@ -1803,8 +1981,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData13(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData[0].WriteAtomic(w), IsNil)
@@ -1832,6 +2013,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData14(c *C) {
 	// Test unauthorized external keyData with authorized LUKS keyData
 	keyData, keys, auxKeys := s.newMultipleNamedKeyData(c, "luks", "external")
 
+	if s.Version != 1 {
+		c.Skip("Keydata versions > 1 don't support model authorization. This behaviour should now be tested in a per-platform basis.")
+	}
+
 	models := []SnapModel{
 		testutil.MakeMockCore20ModelAssertion(c, map[string]interface{}{
 			"authority-id": "fake-brand",
@@ -1840,7 +2025,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData14(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData[0].WriteAtomic(w), IsNil)
@@ -1884,7 +2072,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData15(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData.SetAuthorizedSnapModels(auxKey, models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData.SetAuthorizedSnapModels(auxKey, models...), IsNil)
+	}
 
 	s.testActivateVolumeWithMultipleKeyData(c, &testActivateVolumeWithMultipleKeyDataData{
 		keys:             []DiskUnlockKey{key},
@@ -1918,7 +2109,10 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData16(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData.SetAuthorizedSnapModels(auxKey, models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData.SetAuthorizedSnapModels(auxKey, models...), IsNil)
+	}
 
 	stderr := new(bytes.Buffer)
 	restore := MockStderr(stderr)
@@ -1933,7 +2127,9 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData16(c *C) {
 		activateSlots:    []int{luks2.AnySlot},
 		validKey:         key,
 		validAuxKey:      auxKey})
-	c.Check(stderr.String(), Equals, "secboot: cannot read keydata from token default: cannot decode key data: invalid character 'o' in literal false (expecting 'a')\n")
+	c.Check(stderr.String(), Equals, `secboot: cannot read keydata from token default: cannot `+
+		`decode key data: invalid character 'o' in literal false (expecting 'a')
+`)
 }
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData17(c *C) {
@@ -1950,8 +2146,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData17(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	for i, kd := range keyData {
 		w := makeMockKeyDataWriter()
@@ -1990,8 +2189,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyData18(c *C) {
 			"model":        "fake-model",
 			"grade":        "secured",
 		}, "Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij")}
-	c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
-	c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+
+	if s.Version == 1 {
+		c.Check(keyData[0].SetAuthorizedSnapModels(auxKeys[0], models...), IsNil)
+		c.Check(keyData[1].SetAuthorizedSnapModels(auxKeys[1], models...), IsNil)
+	}
 
 	w := makeMockKeyDataWriter()
 	c.Check(keyData[1].WriteAtomic(w), IsNil)
@@ -2248,12 +2450,15 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling9(c *C) {
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling10(c *C) {
 	// Test that recovery key fallback works if the wrong passphrase is supplied.
-	keyData, keys, _ := s.newMultipleNamedKeyData(c, "foo", "bar")
-	recoveryKey := s.newRecoveryKey()
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData[0].SetPassphrase("1234", nil, &kdf), IsNil)
-	c.Check(keyData[1].SetPassphrase("1234", nil, &kdf), IsNil)
+	passphrases := []string{"1234", "1234"}
+	keyData, keys, _ := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "foo", "bar")
+	recoveryKey := s.newRecoveryKey()
 
 	c.Check(s.testActivateVolumeWithMultipleKeyDataErrorHandling(c, &testActivateVolumeWithMultipleKeyDataErrorHandlingData{
 		keys:        keys,
@@ -2297,12 +2502,15 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling12(c *C) 
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling13(c *C) {
 	// Test that activation fails if the supplied passphrase and recovery key are incorrect
-	keyData, keys, _ := s.newMultipleNamedKeyData(c, "foo", "bar")
-	recoveryKey := s.newRecoveryKey()
+
+	if s.Version == 1 {
+		c.Skip("Legacy keydata v1 keys with passphrase are not used.")
+	}
 
 	var kdf testutil.MockKDF
-	c.Check(keyData[0].SetPassphrase("1234", nil, &kdf), IsNil)
-	c.Check(keyData[1].SetPassphrase("1234", nil, &kdf), IsNil)
+	passphrases := []string{"1234", "1234"}
+	keyData, keys, _ := s.newMultipleNamedKeyDataWithPassphrases(c, passphrases, &kdf, "foo", "bar")
+	recoveryKey := s.newRecoveryKey()
 
 	c.Check(s.testActivateVolumeWithMultipleKeyDataErrorHandling(c, &testActivateVolumeWithMultipleKeyDataErrorHandlingData{
 		keys:        keys,
@@ -2325,6 +2533,11 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling13(c *C) 
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling14(c *C) {
 	// Test with an invalid value for SnapModel.
+
+	if s.Version != 1 {
+		c.Skip("Keydata versions > 1 don't support model authorization. This behaviour should now be tested in a per-platform basis.")
+	}
+
 	keyData, _, _ := s.newMultipleNamedKeyData(c, "", "")
 
 	c.Check(s.testActivateVolumeWithMultipleKeyDataErrorHandling(c, &testActivateVolumeWithMultipleKeyDataErrorHandlingData{
@@ -2334,8 +2547,19 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling14(c *C) 
 
 func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling15(c *C) {
 	// Test with an unauthorized snap model.
+	// Allow this to run for newer keys but check for the keydata_legacy.go
+	// SetAuthorizedSnapModels error.
 	keyData, keys, _ := s.newMultipleNamedKeyData(c, "foo", "bar")
 	recoveryKey := s.newRecoveryKey()
+
+	var errMsg string
+
+	switch s.Version {
+	case 1:
+		errMsg = "snap model is not authorized\n"
+	default:
+		errMsg = "cannot check if snap model is authorized: unsupported key data version\n"
+	}
 
 	c.Check(s.testActivateVolumeWithMultipleKeyDataErrorHandling(c, &testActivateVolumeWithMultipleKeyDataErrorHandlingData{
 		keys:        keys,
@@ -2351,8 +2575,8 @@ func (s *cryptSuite) TestActivateVolumeWithMultipleKeyDataErrorHandling15(c *C) 
 		recoveryKeyTries: 0,
 		activateTries:    0,
 	}), ErrorMatches, "cannot activate with platform protected keys:\n"+
-		"- foo: snap model is not authorized\n"+
-		"- bar: snap model is not authorized\n"+
+		"- foo: "+errMsg+
+		"- bar: "+errMsg+
 		"and activation with recovery key failed: no recovery key tries permitted")
 }
 
@@ -2456,7 +2680,7 @@ func (s *cryptSuite) TestInitializeLUKS2Container(c *C) {
 	s.testInitializeLUKS2Container(c, &testInitializeLUKS2ContainerData{
 		devicePath: "/dev/sda1",
 		label:      "data",
-		key:        s.newPrimaryKey(),
+		key:        s.keyDataTestBase.newPrimaryKey(c, 32),
 		fmtOpts:    &luks2.FormatOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}},
 	})
 }
@@ -2465,7 +2689,7 @@ func (s *cryptSuite) TestInitializeLUKS2ContainerDifferentArgs(c *C) {
 	s.testInitializeLUKS2Container(c, &testInitializeLUKS2ContainerData{
 		devicePath: "/dev/vdc2",
 		label:      "test",
-		key:        s.newPrimaryKey(),
+		key:        s.keyDataTestBase.newPrimaryKey(c, 32),
 		fmtOpts:    &luks2.FormatOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}},
 	})
 }
@@ -2474,7 +2698,7 @@ func (s *cryptSuite) TestInitializeLUKS2ContainerWithOptions(c *C) {
 	s.testInitializeLUKS2Container(c, &testInitializeLUKS2ContainerData{
 		devicePath: "/dev/sda1",
 		label:      "data",
-		key:        s.newPrimaryKey(),
+		key:        s.keyDataTestBase.newPrimaryKey(c, 32),
 		opts:       &InitializeLUKS2ContainerOptions{},
 		fmtOpts:    &luks2.FormatOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}},
 	})
@@ -2484,7 +2708,7 @@ func (s *cryptSuite) TestInitializeLUKS2ContainerWithCustomInitialKeyslotName(c 
 	s.testInitializeLUKS2Container(c, &testInitializeLUKS2ContainerData{
 		devicePath: "/dev/sda1",
 		label:      "data",
-		key:        s.newPrimaryKey(),
+		key:        s.keyDataTestBase.newPrimaryKey(c, 32),
 		opts:       &InitializeLUKS2ContainerOptions{InitialKeyslotName: "foo"},
 		fmtOpts:    &luks2.FormatOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}},
 	})
@@ -2494,7 +2718,7 @@ func (s *cryptSuite) TestInitializeLUKS2ContainerWithCustomMetadataSize(c *C) {
 	s.testInitializeLUKS2Container(c, &testInitializeLUKS2ContainerData{
 		devicePath: "/dev/sda1",
 		label:      "data",
-		key:        s.newPrimaryKey(),
+		key:        s.keyDataTestBase.newPrimaryKey(c, 32),
 		opts: &InitializeLUKS2ContainerOptions{
 			MetadataKiBSize:     2 * 1024, // 2MiB
 			KeyslotsAreaKiBSize: 3 * 1024, // 3MiB
@@ -2511,7 +2735,7 @@ func (s *cryptSuite) TestInitializeLUKS2ContainerWithCustomKDFTime(c *C) {
 	s.testInitializeLUKS2Container(c, &testInitializeLUKS2ContainerData{
 		devicePath: "/dev/sda1",
 		label:      "data",
-		key:        s.newPrimaryKey(),
+		key:        s.keyDataTestBase.newPrimaryKey(c, 32),
 		opts: &InitializeLUKS2ContainerOptions{
 			KDFOptions: &KDFOptions{TargetDuration: 100 * time.Millisecond},
 		},
@@ -2523,7 +2747,7 @@ func (s *cryptSuite) TestInitializeLUKS2ContainerWithCustomKDFMemory(c *C) {
 	s.testInitializeLUKS2Container(c, &testInitializeLUKS2ContainerData{
 		devicePath: "/dev/sda1",
 		label:      "data",
-		key:        s.newPrimaryKey(),
+		key:        s.keyDataTestBase.newPrimaryKey(c, 32),
 		opts: &InitializeLUKS2ContainerOptions{
 			KDFOptions: &KDFOptions{MemoryKiB: 128},
 		},
@@ -2535,7 +2759,7 @@ func (s *cryptSuite) TestInitializeLUKS2ContainerWithCustomKDFIterations(c *C) {
 	s.testInitializeLUKS2Container(c, &testInitializeLUKS2ContainerData{
 		devicePath: "/dev/sda1",
 		label:      "data",
-		key:        s.newPrimaryKey(),
+		key:        s.keyDataTestBase.newPrimaryKey(c, 32),
 		opts: &InitializeLUKS2ContainerOptions{
 			KDFOptions: &KDFOptions{ForceIterations: 10},
 		},
@@ -2544,7 +2768,7 @@ func (s *cryptSuite) TestInitializeLUKS2ContainerWithCustomKDFIterations(c *C) {
 }
 
 func (s *cryptSuite) TestInitializeLUKS2ContainerInvalidKeySize(c *C) {
-	c.Check(InitializeLUKS2Container("/dev/sda1", "data", s.newPrimaryKey()[0:16], nil), ErrorMatches, "expected a key length of at least 256-bits \\(got 128\\)")
+	c.Check(InitializeLUKS2Container("/dev/sda1", "data", ([]byte)(s.keyDataTestBase.newPrimaryKey(c, 32))[0:16], nil), ErrorMatches, "expected a key length of at least 256-bits \\(got 128\\)")
 }
 
 type testAddLUKS2ContainerUnlockKeyData struct {
@@ -2600,7 +2824,7 @@ func (s *cryptSuite) testAddLUKS2ContainerUnlockKey(c *C, data *testAddLUKS2Cont
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKey(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/sda1",
@@ -2614,7 +2838,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKey(c *C) {
 			keyslots: map[int][]byte{0: existingKey},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		keyslotName:     "foo",
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}, Slot: 1},
 		expectedTokenId: 1,
@@ -2622,7 +2846,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKey(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyDifferentPath(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/vdb1",
@@ -2636,7 +2860,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyDifferentPath(c *C) {
 			keyslots: map[int][]byte{0: existingKey},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		keyslotName:     "foo",
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}, Slot: 1},
 		expectedTokenId: 1,
@@ -2644,7 +2868,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyDifferentPath(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyDifferentName(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/sda1",
@@ -2658,7 +2882,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyDifferentName(c *C) {
 			keyslots: map[int][]byte{0: existingKey},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		keyslotName:     "bar",
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}, Slot: 1},
 		expectedTokenId: 1,
@@ -2666,7 +2890,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyDifferentName(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyNoName(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/sda1",
@@ -2680,14 +2904,14 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyNoName(c *C) {
 			keyslots: map[int][]byte{0: existingKey},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}, Slot: 1},
 		expectedTokenId: 1,
 	})
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithOrphanedTokens(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/sda1",
@@ -2702,7 +2926,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithOrphanedTokens(c *C) {
 			keyslots: map[int][]byte{0: existingKey},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		keyslotName:     "foo",
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}, Slot: 1},
 		expectedTokenId: 1,
@@ -2710,7 +2934,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithOrphanedTokens(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithExternalKeyslots(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/sda1",
@@ -2730,7 +2954,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithExternalKeyslots(c *C) {
 			},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		keyslotName:     "foo",
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 4, MemoryKiB: 32}, Slot: 4},
 		expectedTokenId: 1,
@@ -2738,7 +2962,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithExternalKeyslots(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFTime(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/sda1",
@@ -2752,7 +2976,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFTime(c *C) {
 			keyslots: map[int][]byte{0: existingKey},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		keyslotName:     "foo",
 		options:         &KDFOptions{TargetDuration: 100 * time.Millisecond},
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{TargetDuration: 100 * time.Millisecond}, Slot: 1},
@@ -2761,7 +2985,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFTime(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFMemory(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/sda1",
@@ -2775,7 +2999,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFMemory(c *C) {
 			keyslots: map[int][]byte{0: existingKey},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		keyslotName:     "foo",
 		options:         &KDFOptions{MemoryKiB: 64},
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{MemoryKiB: 64}, Slot: 1},
@@ -2784,7 +3008,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFMemory(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFIterations(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerUnlockKey(c, &testAddLUKS2ContainerUnlockKeyData{
 		devicePath: "/dev/sda1",
@@ -2798,7 +3022,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFIterations(c *C)
 			keyslots: map[int][]byte{0: existingKey},
 		},
 		existingKey:     existingKey,
-		key:             s.newPrimaryKey(),
+		key:             s.keyDataTestBase.newPrimaryKey(c, 32),
 		keyslotName:     "foo",
 		options:         &KDFOptions{ForceIterations: 10},
 		expectedOptions: &luks2.AddKeyOptions{KDFOptions: luks2.KDFOptions{ForceIterations: 10}, Slot: 1},
@@ -2807,7 +3031,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyWithCustomKDFIterations(c *C)
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyNameInUse(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.luks2.devices["/dev/sda1"] = &mockLUKS2Container{
 		tokens: map[int]luks2.Token{
@@ -2825,7 +3049,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerUnlockKeyNameInUse(c *C) {
 			1: existingKey,
 		},
 	}
-	c.Check(AddLUKS2ContainerUnlockKey("/dev/sda1", "default", existingKey, make([]byte, 32), nil), ErrorMatches, "the specified name is already in use")
+	c.Check(AddLUKS2ContainerUnlockKey("/dev/sda1", "default", ([]byte)(existingKey), make([]byte, 32), nil), ErrorMatches, "the specified name is already in use")
 }
 
 func (s *cryptSuite) TestListLUKS2ContainerKeyNames(c *C) {
@@ -2919,7 +3143,7 @@ func (s *cryptSuite) testAddLUKS2ContainerRecoveryKey(c *C, data *testAddLUKS2Co
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKey(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -2941,7 +3165,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKey(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyDifferentPath(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/vdb2",
@@ -2963,7 +3187,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyDifferentPath(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyDifferentName(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -2985,7 +3209,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyDifferentName(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyNoName(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -3006,7 +3230,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyNoName(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithOrphanedTokens(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -3029,7 +3253,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithOrphanedTokens(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithExternalKeyslots(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -3059,7 +3283,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithExternalKeyslots(c *C) 
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithCustomKDFTime(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -3082,7 +3306,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithCustomKDFTime(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithCustomKDFMemory(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -3105,7 +3329,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithCustomKDFMemory(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithCustomKDFIterations(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -3128,7 +3352,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyWithCustomKDFIterations(c *
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyDifferentSlot(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testAddLUKS2ContainerRecoveryKey(c, &testAddLUKS2ContainerRecoveryKeyData{
 		devicePath: "/dev/sda1",
@@ -3153,7 +3377,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyDifferentSlot(c *C) {
 }
 
 func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyNameInUse(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.luks2.devices["/dev/sda1"] = &mockLUKS2Container{
 		tokens: map[int]luks2.Token{
@@ -3171,7 +3395,7 @@ func (s *cryptSuite) TestAddLUKS2ContainerRecoveryKeyNameInUse(c *C) {
 			1: nil,
 		},
 	}
-	c.Check(AddLUKS2ContainerRecoveryKey("/dev/sda1", "recovery", existingKey, RecoveryKey{}, nil), ErrorMatches, "the specified name is already in use")
+	c.Check(AddLUKS2ContainerRecoveryKey("/dev/sda1", "recovery", ([]byte)(existingKey), RecoveryKey{}, nil), ErrorMatches, "the specified name is already in use")
 }
 
 type testDeleteLUKS2ContainerKeyData struct {
@@ -3196,7 +3420,7 @@ func (s *cryptSuite) testDeleteLUKS2ContainerKey(c *C, data *testDeleteLUKS2Cont
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKey(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/sda1",
@@ -3224,7 +3448,7 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKey(c *C) {
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentPath(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/nvme0n1p1",
@@ -3252,7 +3476,7 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentPath(c *C) {
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentName(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/sda1",
@@ -3280,7 +3504,7 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentName(c *C) {
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentKeyslot(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/sda1",
@@ -3308,7 +3532,7 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentKeyslot(c *C) {
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentTokenId(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.testDeleteLUKS2ContainerKey(c, &testDeleteLUKS2ContainerKeyData{
 		devicePath: "/dev/sda1",
@@ -3336,7 +3560,7 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyDifferentTokenId(c *C) {
 }
 
 func (s *cryptSuite) TestDeleteLUKS2ContainerKeyLastSlot(c *C) {
-	existingKey := s.newPrimaryKey()
+	existingKey := s.keyDataTestBase.newPrimaryKey(c, 32)
 
 	s.luks2.devices["/dev/sda1"] = &mockLUKS2Container{
 		tokens: map[int]luks2.Token{
@@ -3348,7 +3572,7 @@ func (s *cryptSuite) TestDeleteLUKS2ContainerKeyLastSlot(c *C) {
 		keyslots: map[int][]byte{0: existingKey},
 	}
 
-	c.Check(DeleteLUKS2ContainerKey("/dev/sda1", "default", existingKey), ErrorMatches, "cannot kill last remaining slot")
+	c.Check(DeleteLUKS2ContainerKey("/dev/sda1", "default", ([]byte)(existingKey)), ErrorMatches, "cannot kill last remaining slot")
 }
 
 type testRenameLUKS2ContainerKeyData struct {
@@ -3849,6 +4073,7 @@ func (s *cryptSuiteUnmockedBase) testAddLUKS2ContainerRecoveryKey(c *C, data *te
 		elapsed := time.Now().Sub(start)
 
 		// Check KDF time here with +/-20% tolerance and additional 500ms for cryptsetup exec and other activities
+		// TODO this one is flaky and fails some times
 		c.Check(int(elapsed/time.Millisecond), snapd_testutil.IntGreaterThan, int(float64(expectedKDFTime/time.Millisecond)*0.8))
 		c.Check(int(elapsed/time.Millisecond), snapd_testutil.IntLessThan, int(float64(expectedKDFTime/time.Millisecond)*1.2)+500)
 	}
@@ -4057,4 +4282,16 @@ func (s *cryptSuiteUnmocked) TestRenameLUKS2ContainerRecoveryKey(c *C) {
 			TokenBase: luksview.TokenBase{
 				TokenName:    "bar",
 				TokenKeyslot: 1}}})
+}
+
+type cryptLegacySuite struct {
+	cryptSuite
+}
+
+var _ = Suite(&cryptLegacySuite{})
+
+func (s *cryptLegacySuite) SetUpTest(c *C) {
+	s.cryptSuite.SetUpTest(c)
+	s.Version = 1
+	s.keyDataTestBase.AddCleanup(MockReadKeyData(s.Version))
 }
