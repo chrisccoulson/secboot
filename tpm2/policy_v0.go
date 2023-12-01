@@ -28,6 +28,7 @@ import (
 	"fmt"
 
 	"github.com/canonical/go-tpm2"
+	"github.com/canonical/go-tpm2/policyutil"
 	"github.com/canonical/go-tpm2/util"
 
 	"golang.org/x/xerrors"
@@ -205,33 +206,49 @@ func newPolicyOrDataV0(tree *policyOrTree) (out policyOrData_v0) {
 //   - A policy for updating the authorization value (PIN / passphrase), requiring knowledge of the current authorization value.
 //   - A policy for reading the counter value without knowing the authorization value, as the value isn't secret.
 //   - A policy for using the counter value in a TPM2_PolicyNV assertion without knowing the authorization value.
-func computeV0PinNVIndexPostInitAuthPolicies(alg tpm2.HashAlgorithmId, updateKeyName tpm2.Name) tpm2.DigestList {
+func computeV0PinNVIndexPostInitAuthPolicies(alg tpm2.HashAlgorithmId, updateKey *tpm2.Public) (tpm2.DigestList, error) {
 	var out tpm2.DigestList
 	// Compute a policy for incrementing the index to revoke dynamic authorization policies, requiring an assertion signed by the
 	// key associated with updateKeyName.
-	trial := util.ComputeAuthPolicy(alg)
-	trial.PolicyCommandCode(tpm2.CommandNVIncrement)
-	trial.PolicyNvWritten(true)
-	trial.PolicySigned(updateKeyName, nil)
-	out = append(out, trial.GetDigest())
+	builder := policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicyCommandCode(tpm2.CommandNVIncrement)
+	builder.RootBranch().PolicyNvWritten(true)
+	builder.RootBranch().PolicySigned(updateKey, nil)
+	digest, err := builder.Digest()
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, digest)
 
 	// Compute a policy for updating the authorization value of the index, requiring knowledge of the current authorization value.
-	trial = util.ComputeAuthPolicy(alg)
-	trial.PolicyCommandCode(tpm2.CommandNVChangeAuth)
-	trial.PolicyAuthValue()
-	out = append(out, trial.GetDigest())
+	builder = policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicyCommandCode(tpm2.CommandNVChangeAuth)
+	builder.RootBranch().PolicyAuthValue()
+	digest, err = builder.Digest()
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, digest)
 
 	// Compute a policy for reading the counter value without knowing the authorization value.
-	trial = util.ComputeAuthPolicy(alg)
-	trial.PolicyCommandCode(tpm2.CommandNVRead)
-	out = append(out, trial.GetDigest())
+	builder = policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicyCommandCode(tpm2.CommandNVRead)
+	digest, err = builder.Digest()
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, digest)
 
 	// Compute a policy for using the counter value in a TPM2_PolicyNV assertion without knowing the authorization value.
-	trial = util.ComputeAuthPolicy(alg)
-	trial.PolicyCommandCode(tpm2.CommandPolicyNV)
-	out = append(out, trial.GetDigest())
+	builder = policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicyCommandCode(tpm2.CommandPolicyNV)
+	digest, err = builder.Digest()
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, digest)
 
-	return out
+	return out, nil
 }
 
 // staticPolicyData_v0 represents version 0 of the metadata for executing a
@@ -252,13 +269,15 @@ type pcrPolicyData_v0 struct {
 	AuthorizedPolicySignature *tpm2.Signature
 }
 
-func (d *pcrPolicyData_v0) addPcrAssertions(alg tpm2.HashAlgorithmId, trial *util.TrialAuthPolicy, pcrs tpm2.PCRSelectionList, digests tpm2.DigestList) error {
+func (d *pcrPolicyData_v0) addPcrAssertions(alg tpm2.HashAlgorithmId, builder *policyutil.PolicyBuilder, pcrs tpm2.PCRSelectionList, digests tpm2.DigestList) error {
 	// Compute the policy digest that would result from a TPM2_PolicyPCR assertion for each condition
 	var orDigests tpm2.DigestList
 
 	d.Selection = pcrs
 
 	for _, digest := range digests {
+		builder2 := policyutil.NewPolicyBuilder(alg)
+
 		trial2 := util.ComputeAuthPolicy(alg)
 		trial2.SetDigest(trial.GetDigest())
 		trial2.PolicyPCR(digest, d.Selection)

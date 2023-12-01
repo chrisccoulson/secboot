@@ -26,7 +26,7 @@ import (
 	"fmt"
 
 	"github.com/canonical/go-tpm2"
-	"github.com/canonical/go-tpm2/mu"
+	"github.com/canonical/go-tpm2/policyutil"
 	"github.com/canonical/go-tpm2/util"
 
 	"golang.org/x/xerrors"
@@ -36,8 +36,8 @@ import (
 
 // computeV1PcrPolicyCounterAuthPolicies computes the authorization policy digests passed to
 // TPM2_PolicyOR for a PCR policy counter that can be updated with the key associated with
-// updateKeyName.
-func computeV1PcrPolicyCounterAuthPolicies(alg tpm2.HashAlgorithmId, updateKeyName tpm2.Name) tpm2.DigestList {
+// updateKey.
+func computeV1PcrPolicyCounterAuthPolicies(alg tpm2.HashAlgorithmId, updateKey *tpm2.Public) (tpm2.DigestList, error) {
 	// The NV index requires 2 policies:
 	// - A policy to initialize the index with no authorization
 	// - A policy for updating the index to revoke old PCR policies using a signed assertion. This isn't done for security
@@ -48,23 +48,23 @@ func computeV1PcrPolicyCounterAuthPolicies(alg tpm2.HashAlgorithmId, updateKeyNa
 	// authorization value, but it is always empty and this policy doesn't allow it to be changed).
 	var authPolicies tpm2.DigestList
 
-	if !updateKeyName.IsValid() {
-		// avoid a panic if updateKeyName is invalid. Note that this will
-		// produce invalid policies - callers should take steps to ensure that
-		// updateKeyName is valid.
-		// TODO: Use tpm2.MakeHandleName here
-		updateKeyName = tpm2.Name(mu.MustMarshalToBytes(tpm2.HandleUnassigned))
+	builder := policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicyNvWritten(false)
+	digest, err := builder.Digest(alg)
+	if err != nil {
+		return nil, err
 	}
+	authPolicies = append(authPolicies, digest)
 
-	trial := util.ComputeAuthPolicy(alg)
-	trial.PolicyNvWritten(false)
-	authPolicies = append(authPolicies, trial.GetDigest())
+	builder := policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicySigned(updateKey, nil)
+	digest, err = builder.Digest()
+	if err != nil {
+		return nil, err
+	}
+	authPolicies = append(authPolicies, digest)
 
-	trial = util.ComputeAuthPolicy(alg)
-	trial.PolicySigned(updateKeyName, nil)
-	authPolicies = append(authPolicies, trial.GetDigest())
-
-	return authPolicies
+	return authPolicies, nil
 }
 
 // computeV1PcrPolicyRefFromCounterName computes the reference used for authorization of signed

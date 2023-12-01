@@ -26,9 +26,8 @@ import (
 	"math/rand"
 
 	"github.com/canonical/go-tpm2"
-	"github.com/canonical/go-tpm2/templates"
+	"github.com/canonical/go-tpm2/objectutil"
 	tpm2_testutil "github.com/canonical/go-tpm2/testutil"
-	"github.com/canonical/go-tpm2/util"
 
 	. "gopkg.in/check.v1"
 
@@ -147,7 +146,7 @@ func (s *keyDataV3Suite) newMockImportableKeyData(c *C, role string, requireAuth
 	srkPub, _, _, err := s.TPM().ReadPublic(s.primary)
 	c.Assert(err, IsNil)
 
-	_, priv, symSeed, err := util.CreateDuplicationObject(sensitive, pub, srkPub, nil, nil)
+	_, priv, symSeed, err := objectutil.CreateImportable(testutil.RandReader, sensitive, pub, srkPub, nil, nil)
 	c.Assert(err, IsNil)
 
 	return &KeyData_v3{
@@ -335,7 +334,9 @@ func (s *keyDataV3Suite) TestValidateWrongAuthKey(c *C) {
 
 	authKey, err := ecdsa.GenerateKey(elliptic.P256(), testutil.RandReader)
 	c.Assert(err, IsNil)
-	data.(*KeyData_v3).PolicyData.StaticData.AuthPublicKey = util.NewExternalECCPublicKeyWithDefaults(templates.KeyUsageSign, &authKey.PublicKey)
+	authPublicKey, err := objectutil.NewECCPublicKey(&authKey.PublicKey)
+	c.Assert(err, IsNil)
+	data.(*KeyData_v3).PolicyData.StaticData.AuthPublicKey = authPublicKey
 
 	session := s.StartAuthSession(c, nil, nil, tpm2.SessionTypeHMAC, nil, tpm2.HashAlgorithmSHA256).WithAttrs(tpm2.AttrContinueSession)
 	_, err = data.ValidateData(s.TPM().TPMContext, []byte(role), session)

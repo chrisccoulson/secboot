@@ -26,9 +26,8 @@ import (
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/go-tpm2/mu"
-	"github.com/canonical/go-tpm2/templates"
+	"github.com/canonical/go-tpm2/objectutil"
 	tpm2_testutil "github.com/canonical/go-tpm2/testutil"
-	"github.com/canonical/go-tpm2/util"
 
 	. "gopkg.in/check.v1"
 
@@ -59,7 +58,8 @@ func (s *keyDataV1Suite) newMockKeyData(c *C, pcrPolicyCounterHandle tpm2.Handle
 	authKey, err := ecdsa.GenerateKey(elliptic.P256(), testutil.RandReader)
 	c.Assert(err, IsNil)
 
-	authKeyPublic := util.NewExternalECCPublicKeyWithDefaults(templates.KeyUsageSign, &authKey.PublicKey)
+	authKeyPublic, err := objectutil.NewECCPublicKey(&authKey.PublicKey)
+	c.Assert(err, IsNil)
 	mu.MustCopyValue(&authKeyPublic, authKeyPublic)
 
 	// Create a mock PCR policy counter
@@ -230,7 +230,9 @@ func (s *keyDataV1Suite) TestValidateWrongAuthKey(c *C) {
 
 	authKey, err := ecdsa.GenerateKey(elliptic.P256(), testutil.RandReader)
 	c.Assert(err, IsNil)
-	data.(*KeyData_v1).PolicyData.StaticData.AuthPublicKey = util.NewExternalECCPublicKeyWithDefaults(templates.KeyUsageSign, &authKey.PublicKey)
+	authPublicKey, err := objectutil.NewECCPublicKey(&authKey.PublicKey)
+	c.Assert(err, IsNil)
+	data.(*KeyData_v1).PolicyData.StaticData.AuthPublicKey = authPublicKey
 
 	session := s.StartAuthSession(c, nil, nil, tpm2.SessionTypeHMAC, nil, tpm2.HashAlgorithmSHA256).WithAttrs(tpm2.AttrContinueSession)
 	_, err = data.ValidateData(s.TPM().TPMContext, nil, session)

@@ -28,7 +28,8 @@ import (
 	. "gopkg.in/check.v1"
 
 	"github.com/canonical/go-tpm2"
-	"github.com/canonical/go-tpm2/templates"
+	"github.com/canonical/go-tpm2/cryptutil"
+	"github.com/canonical/go-tpm2/objectutil"
 	tpm2_testutil "github.com/canonical/go-tpm2/testutil"
 	"github.com/canonical/go-tpm2/util"
 
@@ -327,9 +328,12 @@ func (s *policyV0SuiteNoTPM) testUpdatePCRPolicy(c *C, data *testV0UpdatePCRPoli
 		Attrs:   tpm2.NVTypeCounter.WithAttrs(tpm2.AttrNVPolicyWrite | tpm2.AttrNVAuthRead | tpm2.AttrNVPolicyRead | tpm2.AttrNVNoDA | tpm2.AttrNVWritten),
 		Size:    8}
 
+	authPublicKey, err := objectutil.NewRSAPublicKey(&key.PublicKey, objectutil.WithNameAlg(data.authKeyNameAlg))
+	c.Assert(err, IsNil)
+
 	var policyData KeyDataPolicy = &KeyDataPolicy_v0{
 		StaticData: &StaticPolicyData_v0{
-			AuthPublicKey: util.NewExternalRSAPublicKey(data.authKeyNameAlg, templates.KeyUsageSign, nil, &key.PublicKey)},
+			AuthPublicKey: authPublicKey},
 	}
 
 	params := NewPcrPolicyParams(x509.MarshalPKCS1PrivateKey(key), data.pcrs, data.pcrDigests, policyCounterPub.Name(), data.initialSeq)
@@ -356,7 +360,7 @@ func (s *policyV0SuiteNoTPM) testUpdatePCRPolicy(c *C, data *testV0UpdatePCRPoli
 
 	digest, err := util.ComputePolicyAuthorizeDigest(data.authKeyNameAlg, policyData.(*KeyDataPolicy_v0).PCRData.AuthorizedPolicy, nil)
 	c.Check(err, IsNil)
-	ok, err := util.VerifySignature(&key.PublicKey, digest, policyData.(*KeyDataPolicy_v0).PCRData.AuthorizedPolicySignature)
+	ok, err := cryptutil.VerifySignature(&key.PublicKey, digest, policyData.(*KeyDataPolicy_v0).PCRData.AuthorizedPolicySignature)
 	c.Check(err, IsNil)
 	c.Check(ok, testutil.IsTrue)
 }
@@ -467,9 +471,12 @@ func (s *policyV0SuiteNoTPM) TestSetPCRPolicyFrom(c *C) {
 		Attrs:   tpm2.NVTypeCounter.WithAttrs(tpm2.AttrNVPolicyWrite | tpm2.AttrNVPolicyRead | tpm2.AttrNVNoDA | tpm2.AttrNVWritten),
 		Size:    8}
 
+	authPublicKey, err := objectutil.NewRSAPublicKey(&key.PublicKey)
+	c.Assert(err, IsNil)
+
 	policyData1 := &KeyDataPolicy_v0{
 		StaticData: &StaticPolicyData_v0{
-			AuthPublicKey: util.NewExternalRSAPublicKeyWithDefaults(templates.KeyUsageSign, &key.PublicKey)},
+			AuthPublicKey: authPublicKey},
 	}
 
 	params := NewPcrPolicyParams(x509.MarshalPKCS1PrivateKey(key),
@@ -478,9 +485,12 @@ func (s *policyV0SuiteNoTPM) TestSetPCRPolicyFrom(c *C) {
 		policyCounterPub.Name(), 5000)
 	c.Check(policyData1.UpdatePCRPolicy(tpm2.HashAlgorithmSHA256, params), IsNil)
 
+	authPublicKey, err = objectutil.NewRSAPublicKey(&key.PublicKey)
+	c.Assert(err, IsNil)
+
 	var policyData2 KeyDataPolicy = &KeyDataPolicy_v0{
 		StaticData: &StaticPolicyData_v0{
-			AuthPublicKey: util.NewExternalRSAPublicKeyWithDefaults(templates.KeyUsageSign, &key.PublicKey)}}
+			AuthPublicKey: authPublicKey}}
 	policyData2.SetPCRPolicyFrom(policyData1)
 
 	c.Check(policyData2.(*KeyDataPolicy_v0).PCRData, DeepEquals, policyData1.PCRData)
@@ -505,7 +515,8 @@ type testV0ExecutePCRPolicyData struct {
 func (s *policyV0Suite) testExecutePCRPolicy(c *C, data *testV0ExecutePCRPolicyData) {
 	authKey, err := rsa.GenerateKey(testutil.RandReader, 2048)
 	c.Assert(err, IsNil)
-	authKeyPublic := util.NewExternalRSAPublicKey(data.authKeyNameAlg, templates.KeyUsageSign, nil, &authKey.PublicKey)
+	authKeyPublic, err := objectutil.NewRSAPublicKey(&authKey.PublicKey, objectutil.WithNameAlg(data.authKeyNameAlg))
+	c.Assert(err, IsNil)
 
 	policyCounterPub, policyCount, policyCounterPolicies := s.createMockPcrPolicyCounter(c, s.NextAvailableHandle(c, data.policyCounterHandle), authKeyPublic.Name())
 
@@ -814,7 +825,8 @@ type testV0ExecutePCRPolicyErrorHandlingData struct {
 func (s *policyV0Suite) testExecutePCRPolicyErrorHandling(c *C, data *testV0ExecutePCRPolicyErrorHandlingData) error {
 	authKey, err := rsa.GenerateKey(testutil.RandReader, 2048)
 	c.Assert(err, IsNil)
-	authKeyPublic := util.NewExternalRSAPublicKey(data.authKeyNameAlg, templates.KeyUsageSign, nil, &authKey.PublicKey)
+	authKeyPublic, err := objectutil.NewRSAPublicKey(&authKey.PublicKey, objectutil.WithNameAlg(data.authKeyNameAlg))
+	c.Assert(err, IsNil)
 
 	policyCounterPub, policyCount, policyCounterPolicies := s.createMockPcrPolicyCounter(c, s.NextAvailableHandle(c, data.policyCounterHandle), authKeyPublic.Name())
 
@@ -1505,7 +1517,9 @@ func (s *policyV0Suite) TestExecutePCRPolicyErrorHandlingInvalidAuthorizedPolicy
 			key, err := rsa.GenerateKey(testutil.RandReader, 2048)
 			c.Assert(err, IsNil)
 
-			data.StaticData.AuthPublicKey = util.NewExternalRSAPublicKeyWithDefaults(templates.KeyUsageSign, &key.PublicKey)
+			authPublicKey, err := objectutil.NewRSAPublicKey(&key.PublicKey)
+			c.Assert(err, IsNil)
+			data.StaticData.AuthPublicKey = authPublicKey
 
 			scheme := &tpm2.SigScheme{
 				Scheme: tpm2.SigSchemeAlgRSAPSS,
@@ -1565,7 +1579,8 @@ func (s *policyV0Suite) TestExecutePCRPolicyErrorHandlingNoLockIndex(c *C) {
 func (s *policyV0Suite) TestPolicyCounterContextGet(c *C) {
 	authKey, err := rsa.GenerateKey(testutil.RandReader, 2048)
 	c.Assert(err, IsNil)
-	authKeyPublic := util.NewExternalRSAPublicKeyWithDefaults(templates.KeyUsageSign, &authKey.PublicKey)
+	authKeyPublic, err := objectutil.NewRSAPublicKey(&authKey.PublicKey)
+	c.Assert(err, IsNil)
 
 	policyCounterPub, policyCount, policyCounterPolicies := s.createMockPcrPolicyCounter(c, s.NextAvailableHandle(c, 0x01800000), authKeyPublic.Name())
 
@@ -1586,7 +1601,8 @@ func (s *policyV0Suite) TestPolicyCounterContextGet(c *C) {
 func (s *policyV0Suite) TestPolicyCounterContextIncrement(c *C) {
 	authKey, err := rsa.GenerateKey(testutil.RandReader, 2048)
 	c.Assert(err, IsNil)
-	authKeyPublic := util.NewExternalRSAPublicKeyWithDefaults(templates.KeyUsageSign, &authKey.PublicKey)
+	authKeyPublic, err := objectutil.NewRSAPublicKey(&authKey.PublicKey)
+	c.Assert(err, IsNil)
 
 	policyCounterPub, policyCount, policyCounterPolicies := s.createMockPcrPolicyCounter(c, s.NextAvailableHandle(c, 0x01800000), authKeyPublic.Name())
 
@@ -1609,7 +1625,8 @@ func (s *policyV0Suite) TestPolicyCounterContextIncrement(c *C) {
 func (s *policyV0SuiteNoTPM) TestValidateAuthKey(c *C) {
 	authKey, err := rsa.GenerateKey(testutil.RandReader, 2048)
 	c.Assert(err, IsNil)
-	authKeyPublic := util.NewExternalRSAPublicKeyWithDefaults(templates.KeyUsageSign, &authKey.PublicKey)
+	authKeyPublic, err := objectutil.NewRSAPublicKey(&authKey.PublicKey)
+	c.Assert(err, IsNil)
 
 	data := &KeyDataPolicy_v0{
 		StaticData: &StaticPolicyData_v0{
@@ -1620,7 +1637,8 @@ func (s *policyV0SuiteNoTPM) TestValidateAuthKey(c *C) {
 func (s *policyV0SuiteNoTPM) TestValidateAuthKeyWrongKey(c *C) {
 	authKey, err := rsa.GenerateKey(testutil.RandReader, 2048)
 	c.Assert(err, IsNil)
-	authKeyPublic := util.NewExternalRSAPublicKeyWithDefaults(templates.KeyUsageSign, &authKey.PublicKey)
+	authKeyPublic, err := objectutil.NewRSAPublicKey(&authKey.PublicKey)
+	c.Assert(err, IsNil)
 
 	data := &KeyDataPolicy_v0{
 		StaticData: &StaticPolicyData_v0{

@@ -27,7 +27,7 @@ import (
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/go-tpm2/mu"
-	"github.com/canonical/go-tpm2/util"
+	"github.com/canonical/go-tpm2/policyutil"
 	"github.com/snapcore/secboot"
 
 	"golang.org/x/xerrors"
@@ -119,17 +119,9 @@ func (d *keyData_v0) ValidateData(tpm *tpm2.TPMContext, role []byte, session tpm
 		return nil, xerrors.Errorf("cannot read public area of lock NV index: %w", err)
 	}
 	lockNVPub.Attrs &^= tpm2.AttrNVReadLocked
-	lockNVName, err := lockNVPub.ComputeName()
-	if err != nil {
-		return nil, xerrors.Errorf("cannot compute name of lock NV index: %w", err)
-	}
 
 	// Validate the type and scheme of the dynamic authorization policy signing key.
 	authPublicKey := d.PolicyData.StaticData.AuthPublicKey
-	authKeyName, err := authPublicKey.ComputeName()
-	if err != nil {
-		return nil, keyDataError{xerrors.Errorf("cannot compute name of dynamic authorization policy key: %w", err)}
-	}
 	if authPublicKey.Type != tpm2.ObjectTypeRSA {
 		return nil, keyDataError{errors.New("public area of dynamic authorization policy signing key has the wrong type")}
 	}
@@ -160,12 +152,16 @@ func (d *keyData_v0) ValidateData(tpm *tpm2.TPMContext, role []byte, session tpm
 	if !d.KeyPublic.NameAlg.Available() {
 		return nil, keyDataError{errors.New("cannot determine if static authorization policy matches sealed key object: algorithm unavailable")}
 	}
-	trial := util.ComputeAuthPolicy(d.KeyPublic.NameAlg)
-	trial.PolicyAuthorize(nil, authKeyName)
-	trial.PolicySecret(pcrPolicyCounter.Name(), nil)
-	trial.PolicyNV(lockNVName, nil, 0, tpm2.OpEq)
+	builder := policyutil.NewPolicyBuilder(d.KeyPublic.NameAlg)
+	builder.RootBranch().PolicyAuthorize(nil, authPublicKey)
+	builder.RootBranch().PolicySecret(pcrPolicyCounter, nil)
+	builder.RootBranch().PolicyNV(lockNVPub, nil, 0, tpm2.OpEq)
+	expectedDigest, err := builder.Digest()
+	if err != nil {
+		return nil, keyDataError{fmt.Errorf("cannot compute expected static authorization policy digest: %w", err)}
+	}
 
-	if !bytes.Equal(trial.GetDigest(), d.KeyPublic.AuthPolicy) {
+	if !bytes.Equal(expectedDigest, d.KeyPublic.AuthPolicy) {
 		return nil, keyDataError{errors.New("the sealed key object's authorization policy is inconsistent with the associated metadata or persistent TPM resources")}
 	}
 
@@ -178,7 +174,10 @@ func (d *keyData_v0) ValidateData(tpm *tpm2.TPMContext, role []byte, session tpm
 		return nil, keyDataError{errors.New("cannot determine if PCR policy counter has a valid authorization policy: algorithm unavailable")}
 	}
 	pcrPolicyCounterAuthPolicies := d.PolicyData.StaticData.PCRPolicyCounterAuthPolicies
-	expectedPCRPolicyCounterAuthPolicies := computeV0PinNVIndexPostInitAuthPolicies(pcrPolicyCounterPub.NameAlg, authKeyName)
+	expectedPCRPolicyCounterAuthPolicies, err := computeV0PinNVIndexPostInitAuthPolicies(pcrPolicyCounterPub.NameAlg, authKey)
+	if err != nil {
+		return nil, keyDataError{fmt.Errorf("cannot compute OR policy digests for PCR policy counter: %w", err)}
+	}
 	if len(pcrPolicyCounterAuthPolicies)-1 != len(expectedPCRPolicyCounterAuthPolicies) {
 		return nil, keyDataError{errors.New("unexpected number of OR policy digests for PCR policy counter")}
 	}
@@ -188,9 +187,13 @@ func (d *keyData_v0) ValidateData(tpm *tpm2.TPMContext, role []byte, session tpm
 		}
 	}
 
-	trial = util.ComputeAuthPolicy(pcrPolicyCounterPub.NameAlg)
-	trial.PolicyOR(pcrPolicyCounterAuthPolicies)
-	if !bytes.Equal(pcrPolicyCounterPub.AuthPolicy, trial.GetDigest()) {
+	builder = policyutil.NewPolicyBuilder(pcrPolicyCounterPub.NameAlg)
+	builder.RootBranch().PolicyOR(pcrPolicyCounterAuthPolicies)
+	expectedDigest, err = builder.Digest()
+	if err != nil {
+		return nil, keyDataError{fmt.Errorf("cannot compute expected PCR policy counter authorization policy digest: %w", err)}
+	}
+	if !bytes.Equal(pcrPolicyCounterPub.AuthPolicy, expectedDigest) {
 		return nil, keyDataError{errors.New("PCR policy counter has unexpected authorization policy")}
 	}
 

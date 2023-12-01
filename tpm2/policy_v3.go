@@ -30,6 +30,7 @@ import (
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/go-tpm2/mu"
+	"github.com/canonical/go-tpm2/policyutil"
 	"github.com/canonical/go-tpm2/util"
 
 	"golang.org/x/crypto/hkdf"
@@ -89,36 +90,40 @@ func computeV3PcrPolicyRefFromCounterContext(alg tpm2.HashAlgorithmId, role []by
 // computeV3PcrPolicyCounterAuthPolicies computes the authorization policy digests passed to
 // TPM2_PolicyOR for a PCR policy counter that can be updated with the key associated with
 // updateKeyName.
-func computeV3PcrPolicyCounterAuthPolicies(alg tpm2.HashAlgorithmId, updateKeyName tpm2.Name) tpm2.DigestList {
+func computeV3PcrPolicyCounterAuthPolicies(alg tpm2.HashAlgorithmId, updateKey *tpm2.Public) (tpm2.DigestList, error) {
 	// The NV index requires 3 policies:
 	// - A policy to read the index with no authorization.
 	// - A policy to initialize the index with no authorization.
 	// - A policy for updating the index to revoke old PCR policies using a signed assertion.
 	var authPolicies tpm2.DigestList
 
-	if !updateKeyName.IsValid() {
-		// avoid a panic if updateKeyName is invalid. Note that this will
-		// produce invalid policies - callers should take steps to ensure that
-		// updateKeyName is valid.
-		// TODO: Use tpm2.MakeHandleName here
-		updateKeyName = tpm2.Name(mu.MustMarshalToBytes(tpm2.HandleUnassigned))
+	builder := policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicyCommandCode(tpm2.CommandNVRead)
+	digest, err := builder.Digest()
+	if err != nil {
+		return nil, err
 	}
+	authPolicies = append(authPolicies, digest)
 
-	trial := util.ComputeAuthPolicy(alg)
-	trial.PolicyCommandCode(tpm2.CommandNVRead)
-	authPolicies = append(authPolicies, trial.GetDigest())
+	builder = policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicyNvWritten(false)
+	builder.RootBranch().PolicyCommandCode(tpm2.CommandNVIncrement)
+	digest, err = builder.Digest()
+	if err != nil {
+		return nil, err
+	}
+	authPolicies = append(authPolicies, digest)
 
-	trial = util.ComputeAuthPolicy(alg)
-	trial.PolicyNvWritten(false)
-	trial.PolicyCommandCode(tpm2.CommandNVIncrement)
-	authPolicies = append(authPolicies, trial.GetDigest())
+	builder = policyutil.NewPolicyBuilder(alg)
+	builder.RootBranch().PolicySigned(updateKey, []byte("PCR-POLICY-REVOKE"))
+	builder.RootBranch().PolicyCommandCode(tpm2.CommandNVIncrement)
+	digest, err = builder.Digest()
+	if err != nil {
+		return nil, err
+	}
+	authPolicies = append(authPolicies, digest)
 
-	trial = util.ComputeAuthPolicy(alg)
-	trial.PolicySigned(updateKeyName, []byte("PCR-POLICY-REVOKE"))
-	trial.PolicyCommandCode(tpm2.CommandNVIncrement)
-	authPolicies = append(authPolicies, trial.GetDigest())
-
-	return authPolicies
+	return authPolicies, nil
 }
 
 // deriveV3PolicyAuthKey derives an elliptic curve key for signing authorization policies from the

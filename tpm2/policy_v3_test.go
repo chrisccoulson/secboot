@@ -27,7 +27,7 @@ import (
 	"strconv"
 
 	"github.com/canonical/go-tpm2"
-	"github.com/canonical/go-tpm2/templates"
+	"github.com/canonical/go-tpm2/objectutil"
 	tpm2_testutil "github.com/canonical/go-tpm2/testutil"
 	"github.com/canonical/go-tpm2/util"
 
@@ -45,7 +45,9 @@ func (_ policyV3Mixin) newPolicyAuthPublicKey(c *C, nameAlg tpm2.HashAlgorithmId
 	ecdsaKey, err := DeriveV3PolicyAuthKey(nameAlg.GetHash(), key)
 	c.Assert(err, IsNil)
 
-	return util.NewExternalECCPublicKey(nameAlg, templates.KeyUsageSign, nil, &ecdsaKey.PublicKey)
+	pubKey, err := objectutil.NewECCPublicKey(&ecdsaKey.PublicKey, objectutil.WithNameAlg(nameAlg))
+	c.Assert(err, IsNil)
+	return pubKey
 }
 
 type policyV3SuiteNoTPM struct {
@@ -1415,7 +1417,9 @@ func (s *policyV3Suite) TestExecutePCRPolicyErrorHandlingInvalidAuthorizedPolicy
 			key, err := ecdsa.GenerateKey(elliptic.P256(), testutil.RandReader)
 			c.Assert(err, IsNil)
 
-			data.StaticData.AuthPublicKey = util.NewExternalECCPublicKeyWithDefaults(templates.KeyUsageSign, &key.PublicKey)
+			authPublicKey, err := objectutil.NewECCPublicKey(&key.PublicKey)
+			c.Assert(err, IsNil)
+			data.StaticData.AuthPublicKey = authPublicKey
 
 			scheme := &tpm2.SigScheme{
 				Scheme: tpm2.SigSchemeAlgECDSA,

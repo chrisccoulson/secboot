@@ -28,6 +28,7 @@ import (
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/go-tpm2/mu"
+	"github.com/canonical/go-tpm2/objectutil"
 
 	"golang.org/x/xerrors"
 
@@ -162,7 +163,11 @@ func (k *sealedKeyDataBase) load(tpm *tpm2.TPMContext, parent tpm2.ResourceConte
 
 // validateData performs correctness checks on this object.
 func (k *sealedKeyDataBase) validateData(tpm *tpm2.TPMContext, role string, session tpm2.SessionContext) (*tpm2.NVPublic, error) {
-	sealedKeyTemplate := makeImportableSealedKeyTemplate()
+	sealedKeyTemplate := objectutil.NewSealedObjectTemplate(
+		objectutil.WithUserAuthMode(objectutil.RequirePolicy),
+		objectutil.WithProtectionGroupMode(objectutil.Duplicable),
+		objectutil.WithDuplicationMode(objectutil.DuplicationRoot),
+	)
 
 	// Perform some initial checks on the sealed data object's public area to
 	// make sure it's a sealed data object.

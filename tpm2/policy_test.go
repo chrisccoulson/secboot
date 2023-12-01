@@ -28,7 +28,7 @@ import (
 	"strconv"
 
 	"github.com/canonical/go-tpm2"
-	"github.com/canonical/go-tpm2/templates"
+	"github.com/canonical/go-tpm2/objectutil"
 	"github.com/canonical/go-tpm2/util"
 
 	. "gopkg.in/check.v1"
@@ -221,7 +221,8 @@ func (s *policySuiteNoTPM) testNewKeyDataPolicy(c *C, data *testNewKeyDataPolicy
 	c.Assert(err, IsNil)
 	c.Assert(key, testutil.ConvertibleTo, &ecdsa.PublicKey{})
 
-	authKey := util.NewExternalECCPublicKeyWithDefaults(templates.KeyUsageSign, key.(*ecdsa.PublicKey))
+	authKey, err := objectutil.NewECCPublicKey(key.(*ecdsa.PublicKey))
+	c.Assert(err, IsNil)
 
 	pcrPolicyCounterHandle := tpm2.HandleNull
 	if data.pcrPolicyCounterPub != nil {
@@ -316,7 +317,8 @@ func (s *policySuite) testNewKeyDataPolicyLegacy(c *C, data *testNewKeyDataPolic
 	c.Assert(err, IsNil)
 	c.Assert(key, testutil.ConvertibleTo, &ecdsa.PublicKey{})
 
-	authKey := util.NewExternalECCPublicKeyWithDefaults(templates.KeyUsageSign, key.(*ecdsa.PublicKey))
+	authKey, err := objectutil.NewECCPublicKey(key.(*ecdsa.PublicKey))
+	c.Assert(err, IsNil)
 
 	pcrPolicyCounterHandle := tpm2.HandleNull
 	if data.pcrPolicyCounterPub != nil {
@@ -460,9 +462,11 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9pYAXaeeWBHZZ9TCRXNHClxi6NBB
 	c.Assert(err, IsNil)
 	c.Assert(key, testutil.ConvertibleTo, &ecdsa.PublicKey{})
 
+	authKey, err := objectutil.NewECCPublicKey(key.(*ecdsa.PublicKey))
+	c.Assert(err, IsNil)
+
 	handle := s.NextAvailableHandle(c, 0x0181ff00)
-	pub, count, err := CreatePcrPolicyCounter(s.TPM().TPMContext, handle,
-		util.NewExternalECCPublicKeyWithDefaults(templates.KeyUsageSign, key.(*ecdsa.PublicKey)), s.TPM().HmacSession())
+	pub, count, err := CreatePcrPolicyCounter(s.TPM().TPMContext, handle, authKey, s.TPM().HmacSession())
 	c.Assert(err, IsNil)
 	c.Check(pub.Index, Equals, handle)
 	c.Check(pub.Attrs.Type(), Equals, tpm2.NVTypeCounter)
@@ -538,9 +542,11 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9pYAXaeeWBHZZ9TCRXNHClxi6NBB
 	c.Assert(err, IsNil)
 	c.Assert(key, testutil.ConvertibleTo, &ecdsa.PublicKey{})
 
+	authKey, err := objectutil.NewECCPublicKey(key.(*ecdsa.PublicKey))
+	c.Assert(err, IsNil)
+
 	handle := tpm2.Handle(0x0181ff00)
-	pub, count, err := CreatePcrPolicyCounter(s.TPM().TPMContext, handle,
-		util.NewExternalECCPublicKeyWithDefaults(templates.KeyUsageSign, key.(*ecdsa.PublicKey)), s.TPM().HmacSession())
+	pub, count, err := CreatePcrPolicyCounter(s.TPM().TPMContext, handle, authKey, s.TPM().HmacSession())
 	c.Assert(err, IsNil)
 	c.Check(pub.Index, Equals, handle)
 	c.Check(pub.Attrs.Type(), Equals, tpm2.NVTypeCounter)

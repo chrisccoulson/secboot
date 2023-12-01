@@ -20,9 +20,10 @@
 package tpm2
 
 import (
+	"crypto/rand"
+
 	"github.com/canonical/go-tpm2"
-	"github.com/canonical/go-tpm2/templates"
-	"github.com/canonical/go-tpm2/util"
+	"github.com/canonical/go-tpm2/objectutil"
 
 	"golang.org/x/xerrors"
 )
@@ -65,8 +66,10 @@ func (s *sealedObjectKeySealer) CreateSealedObject(data []byte, nameAlg tpm2.Has
 	sensitive := tpm2.SensitiveCreate{Data: data}
 
 	// Define the template
-	template := templates.NewSealedObject(nameAlg)
-	template.Attrs &^= tpm2.AttrUserWithAuth
+	template := objectutil.NewSealedObjectTemplate(
+		objectutil.WithNameAlg(nameAlg),
+		objectutil.WithUserAuthMode(objectutil.RequirePolicy),
+	)
 	template.AuthPolicy = policy
 
 	// Now create the sealed key object. The command is integrity protected so if the object
@@ -91,12 +94,17 @@ type importableObjectKeySealer struct {
 }
 
 func (s *importableObjectKeySealer) CreateSealedObject(data []byte, nameAlg tpm2.HashAlgorithmId, policy tpm2.Digest) (tpm2.Private, *tpm2.Public, tpm2.EncryptedSecret, error) {
-	pub, sensitive := util.NewExternalSealedObject(nameAlg, nil, data)
-	pub.Attrs &^= tpm2.AttrUserWithAuth
+	pub, sensitive, err := objectutil.NewSealedObject(rand.Reader, data, nil,
+		objectutil.WithNameAlg(nameAlg),
+		objectutil.WithUserAuthMode(objectutil.RequirePolicy),
+	)
+	if err != nil {
+		return nil, nil, nil, xerrors.Errorf("cannot create external sealed object: %w", err)
+	}
 	pub.AuthPolicy = policy
 
 	// Now create the importable sealed key object (duplication object).
-	_, priv, importSymSeed, err := util.CreateDuplicationObject(sensitive, pub, s.tpmKey, nil, nil)
+	_, priv, importSymSeed, err := objectutil.CreateImportable(rand.Reader, sensitive, pub, s.tpmKey, nil, nil)
 	if err != nil {
 		return nil, nil, nil, xerrors.Errorf("cannot create duplication object: %w", err)
 	}

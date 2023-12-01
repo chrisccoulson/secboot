@@ -29,7 +29,7 @@ import (
 
 	"github.com/canonical/go-tpm2"
 	"github.com/canonical/go-tpm2/mu"
-	"github.com/canonical/go-tpm2/templates"
+	"github.com/canonical/go-tpm2/objectutil"
 	tpm2_testutil "github.com/canonical/go-tpm2/testutil"
 	"golang.org/x/crypto/cryptobyte"
 	cryptobyte_asn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -481,7 +481,7 @@ func (s *mockKeySealer) CreateSealedObject(data []byte, nameAlg tpm2.HashAlgorit
 		return nil, nil, nil, errors.New("called more than once")
 	}
 
-	pub := templates.NewSealedObject(nameAlg)
+	pub := objectutil.NewSealedObjectTemplate(objectutil.WithNameAlg(nameAlg))
 	pub.AuthPolicy = policy
 
 	return tpm2.Private(data), pub, nil, nil
