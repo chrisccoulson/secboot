@@ -38,14 +38,15 @@ var (
 // and for passphrase support.
 type KDFOptions struct {
 	// MemoryKiB specifies the maximum memory cost in KiB when ForceIterations
-	// is zero. If ForceIterations is not zero, then this is used as the
-	// memory cost.
+	// is zero. In this case, it will be capped at 4GiB or half of the available
+	// memory, whichever is less. If ForceIterations is not zero, then this is
+	// used as the memory cost and is not limited.
 	MemoryKiB int
 
 	// TargetDuration specifies the target duration for the KDF which
 	// is used to benchmark the time and memory cost parameters. If it
-	// is zero then the default is used. If ForceIterations is not zero
-	// then this field is ignored.
+	// is zero then the default is used (2 seconds). If ForceIterations is not
+	// zero then this field is ignored.
 	TargetDuration time.Duration
 
 	// ForceIterations can be used to turn off KDF benchmarking by
@@ -53,9 +54,10 @@ type KDFOptions struct {
 	// parameters are benchmarked based on the value of TargetDuration.
 	ForceIterations int
 
-	// Parallel sets the maximum number of parallel threads for the
-	// KDF (up to 4). This will be adjusted downwards based on the
-	// actual number of CPUs.
+	// Parallel sets the maximum number of parallel threads for the KDF. If
+	// it is zero, then it is set to the number of CPUs or 4, whichever is
+	// less. This will always be automatically limited to 4 when ForceIterations
+	// is zero.
 	Parallel int
 }
 
@@ -86,9 +88,6 @@ func (o *KDFOptions) deriveCostParams(keyLen int, kdf KDF) (*KDFCostParams, erro
 		}
 		if o.Parallel != 0 {
 			params.Threads = uint8(o.Parallel)
-			if o.Parallel > 4 {
-				params.Threads = 4
-			}
 		}
 
 		return params, nil
@@ -105,9 +104,6 @@ func (o *KDFOptions) deriveCostParams(keyLen int, kdf KDF) (*KDFCostParams, erro
 		}
 		if o.Parallel != 0 {
 			benchmarkParams.Threads = uint8(o.Parallel)
-			if o.Parallel > 4 {
-				benchmarkParams.Threads = 4
-			}
 		}
 
 		params, err := argon2.Benchmark(benchmarkParams, func(params *argon2.CostParams) (time.Duration, error) {

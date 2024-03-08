@@ -62,6 +62,12 @@ func (s *argon2Suite) checkParams(c *C, opts *KDFOptions, ncpus int, params *KDF
 			expectedMem = 1 * 1024 * 1024
 		}
 		c.Check(params.MemoryKiB, Equals, uint32(expectedMem))
+
+		expectedThreads := opts.Parallel
+		if expectedThreads == 0 {
+			expectedThreads = ncpus
+		}
+		c.Check(params.Threads, Equals, uint8(expectedThreads))
 	} else {
 		targetDuration := opts.TargetDuration
 		if targetDuration == 0 {
@@ -79,16 +85,16 @@ func (s *argon2Suite) checkParams(c *C, opts *KDFOptions, ncpus int, params *KDF
 			maxMem = s.halfTotalRamKiB
 		}
 		c.Check(int(params.MemoryKiB), snapd_testutil.IntLessEqual, int(maxMem))
-	}
 
-	expectedThreads := opts.Parallel
-	if expectedThreads == 0 {
-		expectedThreads = ncpus
+		expectedThreads := opts.Parallel
+		if expectedThreads == 0 {
+			expectedThreads = ncpus
+		}
+		if expectedThreads > 4 {
+			expectedThreads = 4
+		}
+		c.Check(params.Threads, Equals, uint8(expectedThreads))
 	}
-	if expectedThreads > 4 {
-		expectedThreads = 4
-	}
-	c.Check(params.Threads, Equals, uint8(expectedThreads))
 }
 
 var _ = Suite(&argon2Suite{})
@@ -199,6 +205,22 @@ func (s *argon2Suite) TestDeriveCostParamsForceThreads(c *C) {
 	c.Check(kdf.BenchmarkKeyLen, Equals, uint32(0))
 
 	s.checkParams(c, &opts, 1, params)
+}
+
+func (s *argon2Suite) TestDeriveCostParamsForceThreadsGreatherThanCPUNum(c *C) {
+	restore := MockRuntimeNumCPU(2)
+	defer restore()
+
+	var kdf testutil.MockKDF
+
+	var opts KDFOptions
+	opts.ForceIterations = 3
+	opts.Parallel = 8
+	params, err := opts.DeriveCostParams(48, &kdf)
+	c.Assert(err, IsNil)
+	c.Check(kdf.BenchmarkKeyLen, Equals, uint32(0))
+
+	s.checkParams(c, &opts, 8, params)
 }
 
 type argon2SuiteExpensive struct{}
