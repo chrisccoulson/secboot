@@ -34,10 +34,13 @@ var (
 	KeyDataGeneration      = keyDataGeneration
 )
 
-type ProtectedKeys = protectedKeys
+type (
+	KdfParams     = kdfParams
+	ProtectedKeys = protectedKeys
+)
 
-func (o *KDFOptions) DeriveCostParams(keyLen int, kdf KDF) (*KDFCostParams, error) {
-	return o.deriveCostParams(keyLen, kdf)
+func (o *Argon2Options) KdfParams(keyLen uint32) (*KdfParams, error) {
+	return o.kdfParams(keyLen)
 }
 
 func MockLUKS2Activate(fn func(string, string, []byte, int) error) (restore func()) {
@@ -148,8 +151,8 @@ func MockHashAlgAvailable() (restore func()) {
 	}
 }
 
-func (d *KeyData) DerivePassphraseKeys(passphrase string, kdf KDF) (key, iv, auth []byte, err error) {
-	return d.derivePassphraseKeys(passphrase, kdf)
+func (d *KeyData) DerivePassphraseKeys(passphrase string) (key, iv, auth []byte, err error) {
+	return d.derivePassphraseKeys(passphrase)
 }
 
 // MarshalV1Keys serializes the supplied disk unlock key and auxiliary key in

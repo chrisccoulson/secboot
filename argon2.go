@@ -21,8 +21,10 @@ package secboot
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"runtime"
+	"sync"
 	"time"
 
 	"golang.org/x/xerrors"
@@ -31,17 +33,60 @@ import (
 )
 
 var (
+	argon2Mu   sync.Mutex
+	argon2Impl Argon2KDF = nullArgon2KDFImpl{}
+
 	runtimeNumCPU = runtime.NumCPU
 )
 
-// KDFOptions specifies parameters for the Argon2 KDF used by cryptsetup
+// SetArgon2KDF sets the KDF implementation for Argon2. The default here is
+// NullArgon2KDF, so this will need to be configured explicitly in order to
+// use Argon2.
+func SetArgon2KDF(kdf Argon2KDF) Argon2KDF {
+	argon2Mu.Lock()
+	defer argon2Mu.Unlock()
+
+	orig := argon2Impl
+	if kdf == nil {
+		argon2Impl = nullArgon2KDFImpl{}
+	} else {
+		argon2Impl = kdf
+	}
+	return orig
+}
+
+func argon2KDF() Argon2KDF {
+	argon2Mu.Lock()
+	defer argon2Mu.Unlock()
+	return argon2Impl
+}
+
+// Argon2Mode describes the Argon2 mode to use.
+type Argon2Mode string
+
+const (
+	// Argon2Default is used by Argon2Options to select the default
+	// Argon2 mode, which is currently Argon2id.
+	Argon2Default Argon2Mode = ""
+
+	// Argon2i is the data-independent mode of Argon2.
+	Argon2i Argon2Mode = "argon2i"
+
+	// Argon2id is the hybrid mode of Argon2.
+	Argon2id Argon2Mode = "argon2id"
+)
+
+// Argon2Options specifies parameters for the Argon2 KDF used by cryptsetup
 // and for passphrase support.
-type KDFOptions struct {
+type Argon2Options struct {
+	// Mode specifies the KDF mode to use.
+	Mode Argon2Mode
+
 	// MemoryKiB specifies the maximum memory cost in KiB when ForceIterations
 	// is zero. In this case, it will be capped at 4GiB or half of the available
 	// memory, whichever is less. If ForceIterations is not zero, then this is
 	// used as the memory cost and is not limited.
-	MemoryKiB int
+	MemoryKiB uint32
 
 	// TargetDuration specifies the target duration for the KDF which
 	// is used to benchmark the time and memory cost parameters. If it
@@ -52,79 +97,99 @@ type KDFOptions struct {
 	// ForceIterations can be used to turn off KDF benchmarking by
 	// setting the time cost directly. If this is zero then the cost
 	// parameters are benchmarked based on the value of TargetDuration.
-	ForceIterations int
+	ForceIterations uint32
 
 	// Parallel sets the maximum number of parallel threads for the KDF. If
 	// it is zero, then it is set to the number of CPUs or 4, whichever is
 	// less. This will always be automatically limited to 4 when ForceIterations
 	// is zero.
-	Parallel int
+	Parallel uint8
 }
 
-func (o *KDFOptions) deriveCostParams(keyLen int, kdf KDF) (*KDFCostParams, error) {
-	switch {
-	case int64(o.ForceIterations) > math.MaxUint32:
-		return nil, errors.New("ForceIterations too large")
-	case int64(o.MemoryKiB) > math.MaxUint32:
-		return nil, errors.New("MemoryKiB too large")
-	case o.Parallel > math.MaxUint8:
-		return nil, errors.New("Parallel too large")
-	case o.ForceIterations < 0:
-		return nil, errors.New("ForceIterations can't be negative")
-	case int64(keyLen) > math.MaxUint32:
-		return nil, errors.New("keyLen too large")
-	case o.ForceIterations > 0:
-		threads := runtimeNumCPU()
-		if threads > 4 {
-			threads = 4
-		}
-		params := &KDFCostParams{
-			Time:      uint32(o.ForceIterations),
-			MemoryKiB: 1 * 1024 * 1024,
-			Threads:   uint8(threads)}
+func (o *Argon2Options) kdfParams(keyLen uint32) (*kdfParams, error) {
+	switch o.Mode {
+	case Argon2Default, Argon2i, Argon2id:
+		// ok
+	default:
+		return nil, errors.New("invalid argon2 mode")
+	}
 
+	mode := o.Mode
+	if mode == Argon2Default {
+		mode = Argon2id
+	}
+
+	switch {
+	case o.ForceIterations > 0:
+		// The non-benchmarked path. Ensure that ForceIterations
+		// and MemoryKiB fit into an int32 so that it always fits
+		// into an int
+		switch {
+		case int64(o.ForceIterations) > math.MaxInt32:
+			return nil, fmt.Errorf("invalid iterations count %d", o.ForceIterations)
+		case int64(o.MemoryKiB) > math.MaxInt32:
+			return nil, fmt.Errorf("invalid memory cost %dKiB", o.MemoryKiB)
+		}
+
+		defaultThreads := runtimeNumCPU()
+		if defaultThreads > 4 {
+			// limit the default threads to 4
+			defaultThreads = 4
+		}
+
+		params := &kdfParams{
+			Type:   string(mode),
+			Time:   int(o.ForceIterations), // no limit to the time cost.
+			Memory: 1 * 1024 * 1024,        // the default memory cost is 1GiB.
+			CPUs:   defaultThreads,         // the default number of threads is min(4,nr_of_cpus).
+		}
 		if o.MemoryKiB != 0 {
-			params.MemoryKiB = uint32(o.MemoryKiB)
+			// no limit to the memory cost.
+			params.Memory = int(o.MemoryKiB)
 		}
 		if o.Parallel != 0 {
-			params.Threads = uint8(o.Parallel)
+			// no limit to the threads if set explicitly.
+			params.CPUs = int(o.Parallel)
 		}
 
 		return params, nil
 	default:
 		benchmarkParams := &argon2.BenchmarkParams{
-			MaxMemoryCostKiB: 1 * 1024 * 1024,
-			TargetDuration:   2 * time.Second}
+			MaxMemoryCostKiB: 1 * 1024 * 1024, // the default maximum memory cost is 1GiB.
+			TargetDuration:   2 * time.Second, // the default target duration is 2s.
+		}
 
 		if o.MemoryKiB != 0 {
-			benchmarkParams.MaxMemoryCostKiB = uint32(o.MemoryKiB)
+			benchmarkParams.MaxMemoryCostKiB = o.MemoryKiB // this is capped to 4GiB by internal/argon2.
 		}
 		if o.TargetDuration != 0 {
 			benchmarkParams.TargetDuration = o.TargetDuration
 		}
 		if o.Parallel != 0 {
-			benchmarkParams.Threads = uint8(o.Parallel)
+			benchmarkParams.Threads = o.Parallel // this is capped to 4 by internal/argon2.
 		}
 
 		params, err := argon2.Benchmark(benchmarkParams, func(params *argon2.CostParams) (time.Duration, error) {
-			return kdf.Time(&KDFCostParams{
+			return argon2KDF().Time(mode, &Argon2CostParams{
 				Time:      params.Time,
 				MemoryKiB: params.MemoryKiB,
-				Threads:   params.Threads}, uint32(keyLen))
+				Threads:   params.Threads}, keyLen)
 		})
 		if err != nil {
 			return nil, xerrors.Errorf("cannot benchmark KDF: %w", err)
 		}
 
-		return &KDFCostParams{
-			Time:      params.Time,
-			MemoryKiB: params.MemoryKiB,
-			Threads:   params.Threads}, nil
+		o = &Argon2Options{
+			Mode:            mode,
+			MemoryKiB:       params.MemoryKiB,
+			ForceIterations: params.Time,
+			Parallel:        params.Threads}
+		return o.kdfParams(keyLen)
 	}
 }
 
-// KDFCostParams defines the cost parameters for key derivation using Argon2.
-type KDFCostParams struct {
+// Argon2CostParams defines the cost parameters for key derivation using Argon2.
+type Argon2CostParams struct {
 	// Time corresponds to the number of iterations of the algorithm
 	// that the key derivation will use.
 	Time uint32
@@ -138,41 +203,79 @@ type KDFCostParams struct {
 	Threads uint8
 }
 
-func (p *KDFCostParams) internalParams() *argon2.CostParams {
+func (p *Argon2CostParams) internalParams() *argon2.CostParams {
 	return &argon2.CostParams{
 		Time:      p.Time,
 		MemoryKiB: p.MemoryKiB,
 		Threads:   p.Threads}
 }
 
-// KDF is an interface to abstract use of the Argon2 KDF to make it possible
+// Argon2KDF is an interface to abstract use of the Argon2 KDF to make it possible
 // to delegate execution to a short-lived utility process where required.
-type KDF interface {
+type Argon2KDF interface {
 	// Derive derives a key of the specified length in bytes, from the supplied
-	// passphrase and salt and using the supplied cost parameters.
-	Derive(passphrase string, salt []byte, params *KDFCostParams, keyLen uint32) ([]byte, error)
+	// passphrase and salt and using the supplied cost parameters and mode.
+	Derive(passphrase string, salt []byte, mode Argon2Mode, params *Argon2CostParams, keyLen uint32) ([]byte, error)
 
 	// Time measures the amount of time the KDF takes to execute with the
-	// specified cost parameters and key length in bytes.
-	Time(params *KDFCostParams, keyLen uint32) (time.Duration, error)
+	// specified cost parameters, mode and key length in bytes.
+	Time(mode Argon2Mode, params *Argon2CostParams, keyLen uint32) (time.Duration, error)
 }
 
-type argon2iKDFImpl struct{}
+type inProcessArgon2KDFImpl struct{}
 
-func (_ argon2iKDFImpl) Derive(passphrase string, salt []byte, params *KDFCostParams, keyLen uint32) ([]byte, error) {
-	return argon2.Key(passphrase, salt, params.internalParams(), keyLen), nil
+func (_ inProcessArgon2KDFImpl) Derive(passphrase string, salt []byte, mode Argon2Mode, params *Argon2CostParams, keyLen uint32) ([]byte, error) {
+	switch mode {
+	case Argon2i, Argon2id:
+		// ok
+	default:
+		return nil, errors.New("invalid mode")
+	}
+
+	switch {
+	case params == nil:
+		return nil, errors.New("nil params")
+	case params.Time == 0:
+		return nil, errors.New("invalid time cost")
+	case params.Threads == 0:
+		return nil, errors.New("invalid number of threads")
+	}
+
+	return argon2.Key(passphrase, salt, argon2.Mode(mode), params.internalParams(), keyLen), nil
 }
 
-func (_ argon2iKDFImpl) Time(params *KDFCostParams, keyLen uint32) (time.Duration, error) {
-	return argon2.KeyDuration(params.internalParams(), keyLen), nil
+func (_ inProcessArgon2KDFImpl) Time(mode Argon2Mode, params *Argon2CostParams, keyLen uint32) (time.Duration, error) {
+	switch mode {
+	case Argon2i, Argon2id:
+		// ok
+	default:
+		return 0, errors.New("invalid mode")
+	}
+
+	switch {
+	case params == nil:
+		return 0, errors.New("nil params")
+	case params.Time == 0:
+		return 0, errors.New("invalid time cost")
+	case params.Threads == 0:
+		return 0, errors.New("invalid number of threads")
+	}
+
+	return argon2.KeyDuration(argon2.Mode(mode), params.internalParams(), keyLen), nil
 }
 
-var argon2iKDF = argon2iKDFImpl{}
-
-// Argon2iKDF returns the in-process Argon2i implementation of KDF. This
+// InProcessArgon2KDF is the in-process implementation of the Argon2 KDF. This
 // shouldn't be used in long-lived system processes - these processes should
 // instead provide their own KDF implementation which delegates to a short-lived
 // utility process which will use the in-process implementation.
-func Argon2iKDF() KDF {
-	return argon2iKDF
+var InProcessArgon2KDF = inProcessArgon2KDFImpl{}
+
+type nullArgon2KDFImpl struct{}
+
+func (_ nullArgon2KDFImpl) Derive(passphrase string, salt []byte, mode Argon2Mode, params *Argon2CostParams, keyLen uint32) ([]byte, error) {
+	return nil, errors.New("no argon2 KDF")
+}
+
+func (_ nullArgon2KDFImpl) Time(mode Argon2Mode, params *Argon2CostParams, keyLen uint32) (time.Duration, error) {
+	return 0, errors.New("no argon2 KDF")
 }
