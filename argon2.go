@@ -173,7 +173,7 @@ func (o *Argon2Options) kdfParams(keyLen uint32) (*kdfParams, error) {
 			return argon2KDF().Time(mode, &Argon2CostParams{
 				Time:      params.Time,
 				MemoryKiB: params.MemoryKiB,
-				Threads:   params.Threads}, keyLen)
+				Threads:   params.Threads})
 		})
 		if err != nil {
 			return nil, xerrors.Errorf("cannot benchmark KDF: %w", err)
@@ -218,8 +218,8 @@ type Argon2KDF interface {
 	Derive(passphrase string, salt []byte, mode Argon2Mode, params *Argon2CostParams, keyLen uint32) ([]byte, error)
 
 	// Time measures the amount of time the KDF takes to execute with the
-	// specified cost parameters, mode and key length in bytes.
-	Time(mode Argon2Mode, params *Argon2CostParams, keyLen uint32) (time.Duration, error)
+	// specified cost parameters and mode.
+	Time(mode Argon2Mode, params *Argon2CostParams) (time.Duration, error)
 }
 
 type inProcessArgon2KDFImpl struct{}
@@ -244,7 +244,7 @@ func (_ inProcessArgon2KDFImpl) Derive(passphrase string, salt []byte, mode Argo
 	return argon2.Key(passphrase, salt, argon2.Mode(mode), params.internalParams(), keyLen), nil
 }
 
-func (_ inProcessArgon2KDFImpl) Time(mode Argon2Mode, params *Argon2CostParams, keyLen uint32) (time.Duration, error) {
+func (_ inProcessArgon2KDFImpl) Time(mode Argon2Mode, params *Argon2CostParams) (time.Duration, error) {
 	switch mode {
 	case Argon2i, Argon2id:
 		// ok
@@ -261,7 +261,7 @@ func (_ inProcessArgon2KDFImpl) Time(mode Argon2Mode, params *Argon2CostParams, 
 		return 0, errors.New("invalid number of threads")
 	}
 
-	return argon2.KeyDuration(argon2.Mode(mode), params.internalParams(), keyLen), nil
+	return argon2.KeyDuration(argon2.Mode(mode), params.internalParams()), nil
 }
 
 // InProcessArgon2KDF is the in-process implementation of the Argon2 KDF. This
@@ -276,6 +276,6 @@ func (_ nullArgon2KDFImpl) Derive(passphrase string, salt []byte, mode Argon2Mod
 	return nil, errors.New("no argon2 KDF")
 }
 
-func (_ nullArgon2KDFImpl) Time(mode Argon2Mode, params *Argon2CostParams, keyLen uint32) (time.Duration, error) {
+func (_ nullArgon2KDFImpl) Time(mode Argon2Mode, params *Argon2CostParams) (time.Duration, error) {
 	return 0, errors.New("no argon2 KDF")
 }

@@ -37,10 +37,6 @@ type MockArgon2KDF struct {
 	// BenchmarkMode is the mode that Time was last called with. Set this
 	// to Argon2Default before running a mock benchmark.
 	BenchmarkMode secboot.Argon2Mode
-
-	// BenchmarkKeyLen is the key length that Time was called with. Set this
-	// to zero before running a mock benchmark.
-	BenchmarkKeyLen uint32
 }
 
 // Derive implements secboot.KDF.Derive and derives a key from the supplied
@@ -66,15 +62,11 @@ func (_ *MockArgon2KDF) Derive(passphrase string, salt []byte, mode secboot.Argo
 
 // Time implements secboot.KDF.Time and returns a time that is linearly
 // related to the specified cost parameters, suitable for mocking benchmarking.
-func (k *MockArgon2KDF) Time(mode secboot.Argon2Mode, params *secboot.Argon2CostParams, keyLen uint32) (time.Duration, error) {
+func (k *MockArgon2KDF) Time(mode secboot.Argon2Mode, params *secboot.Argon2CostParams) (time.Duration, error) {
 	if k.BenchmarkMode != secboot.Argon2Default && k.BenchmarkMode != mode {
 		return 0, errors.New("unexpected mode")
 	}
-	if k.BenchmarkKeyLen != 0 && k.BenchmarkKeyLen != keyLen {
-		return 0, errors.New("unexpected key length")
-	}
 	k.BenchmarkMode = mode
-	k.BenchmarkKeyLen = keyLen
 
 	const memBandwidthKiBPerMs = 2048
 	duration := (time.Duration(float64(params.MemoryKiB)/float64(memBandwidthKiBPerMs)) * time.Duration(params.Time)) * time.Millisecond

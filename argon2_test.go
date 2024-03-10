@@ -100,7 +100,7 @@ func (s *argon2Suite) checkParams(c *C, opts *Argon2Options, ncpus int, params *
 			Time:      uint32(params.Time),
 			MemoryKiB: uint32(params.Memory),
 			Threads:   uint8(params.CPUs),
-		}, 0)
+		})
 		c.Check(duration, Equals, targetDuration)
 
 		maxMem := uint64(opts.MemoryKiB)
@@ -130,7 +130,6 @@ func (s *argon2Suite) TestKDFParamsDefault(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2id)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(32))
 
 	s.checkParams(c, &opts, s.cpus, params)
 }
@@ -141,7 +140,6 @@ func (s *argon2Suite) TestKDFParamsExplicitMode(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2i)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(32))
 
 	s.checkParams(c, &opts, s.cpus, params)
 }
@@ -152,7 +150,6 @@ func (s *argon2Suite) TestKDFParamsMemoryLimit(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2id)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(32))
 
 	s.checkParams(c, &opts, s.cpus, params)
 }
@@ -163,17 +160,6 @@ func (s *argon2Suite) TestKDFParamsForceBenchmarkedThreads(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2id)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(32))
-
-	s.checkParams(c, &opts, s.cpus, params)
-}
-
-func (s *argon2Suite) TestKDFParamsDifferentKeyLen(c *C) {
-	var opts Argon2Options
-	params, err := opts.KdfParams(48)
-	c.Assert(err, IsNil)
-	c.Check(s.kdf.BenchmarkMode, Equals, Argon2id)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(48))
 
 	s.checkParams(c, &opts, s.cpus, params)
 }
@@ -187,7 +173,6 @@ func (s *argon2Suite) TestKDFParamsForceIterations(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2Default)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(0))
 
 	s.checkParams(c, &opts, 2, params)
 }
@@ -202,7 +187,6 @@ func (s *argon2Suite) TestKDFParamsForceMemory(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2Default)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(0))
 
 	s.checkParams(c, &opts, 2, params)
 }
@@ -216,7 +200,6 @@ func (s *argon2Suite) TestKDFParamsForceIterationsDifferentCPUNum(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2Default)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(0))
 
 	s.checkParams(c, &opts, 4, params)
 }
@@ -231,7 +214,6 @@ func (s *argon2Suite) TestKDFParamsForceThreads(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2Default)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(0))
 
 	s.checkParams(c, &opts, 1, params)
 }
@@ -246,7 +228,6 @@ func (s *argon2Suite) TestKDFParamsForceThreadsGreatherThanCPUNum(c *C) {
 	params, err := opts.KdfParams(32)
 	c.Assert(err, IsNil)
 	c.Check(s.kdf.BenchmarkMode, Equals, Argon2Default)
-	c.Check(s.kdf.BenchmarkKeyLen, Equals, uint32(0))
 
 	s.checkParams(c, &opts, 8, params)
 }
@@ -287,22 +268,22 @@ func (s *argon2Suite) TestInProcessKDFDeriveInvalidThreads(c *C) {
 }
 
 func (s *argon2Suite) TestInProcessKDFTimeInvalidMode(c *C) {
-	_, err := InProcessArgon2KDF.Time(Argon2Default, &Argon2CostParams{Time: 4, MemoryKiB: 32, Threads: 1}, 32)
+	_, err := InProcessArgon2KDF.Time(Argon2Default, &Argon2CostParams{Time: 4, MemoryKiB: 32, Threads: 1})
 	c.Check(err, ErrorMatches, `invalid mode`)
 }
 
 func (s *argon2Suite) TestInProcessKDFTimeInvalidParams(c *C) {
-	_, err := InProcessArgon2KDF.Time(Argon2id, nil, 32)
+	_, err := InProcessArgon2KDF.Time(Argon2id, nil)
 	c.Check(err, ErrorMatches, `nil params`)
 }
 
 func (s *argon2Suite) TestInProcessKDFTimeInvalidTime(c *C) {
-	_, err := InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 0, MemoryKiB: 32, Threads: 1}, 32)
+	_, err := InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 0, MemoryKiB: 32, Threads: 1})
 	c.Check(err, ErrorMatches, `invalid time cost`)
 }
 
 func (s *argon2Suite) TestInProcessKDFTimeInvalidThreads(c *C) {
-	_, err := InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 4, MemoryKiB: 32, Threads: 0}, 32)
+	_, err := InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 4, MemoryKiB: 32, Threads: 0})
 	c.Check(err, ErrorMatches, `invalid number of threads`)
 }
 
@@ -411,25 +392,25 @@ func (s *argon2SuiteExpensive) TestInProcessKDFDeriveDifferentKeyLen(c *C) {
 }
 
 func (s *argon2SuiteExpensive) TestInProcessKDFTime(c *C) {
-	time1, err := InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 4, MemoryKiB: 32 * 1024, Threads: 4}, 32)
+	time1, err := InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 4, MemoryKiB: 32 * 1024, Threads: 4})
 	runtime.GC()
 	c.Check(err, IsNil)
 
-	time2, err := InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 16, MemoryKiB: 32 * 1024, Threads: 4}, 32)
-	runtime.GC()
-	c.Check(err, IsNil)
-	// XXX: this needs a checker like go-tpm2/testutil's IntGreater, which copes with
-	// types of int64 kind
-	c.Check(time2 > time1, testutil.IsTrue)
-
-	time2, err = InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 4, MemoryKiB: 128 * 1024, Threads: 4}, 32)
+	time2, err := InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 16, MemoryKiB: 32 * 1024, Threads: 4})
 	runtime.GC()
 	c.Check(err, IsNil)
 	// XXX: this needs a checker like go-tpm2/testutil's IntGreater, which copes with
 	// types of int64 kind
 	c.Check(time2 > time1, testutil.IsTrue)
 
-	time2, err = InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 4, MemoryKiB: 32 * 1024, Threads: 1}, 32)
+	time2, err = InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 4, MemoryKiB: 128 * 1024, Threads: 4})
+	runtime.GC()
+	c.Check(err, IsNil)
+	// XXX: this needs a checker like go-tpm2/testutil's IntGreater, which copes with
+	// types of int64 kind
+	c.Check(time2 > time1, testutil.IsTrue)
+
+	time2, err = InProcessArgon2KDF.Time(Argon2id, &Argon2CostParams{Time: 4, MemoryKiB: 32 * 1024, Threads: 1})
 	runtime.GC()
 	c.Check(err, IsNil)
 	// XXX: this needs a checker like go-tpm2/testutil's IntGreater, which copes with
