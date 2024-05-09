@@ -54,8 +54,9 @@ func WithHostEnvironment(env HostEnvironment) PCRProfileOption {
 	return &hostEnvironmentOption{HostEnvironment: env}
 }
 
-func (o *hostEnvironmentOption) applyOptionTo(gen *pcrProfileGenerator) {
+func (o *hostEnvironmentOption) applyOptionTo(gen *pcrProfileGenerator) error {
 	gen.env = o.HostEnvironment
+	return nil
 }
 
 // varReader is a subset of HostEnvironment that is just for EFI variables

@@ -31,12 +31,12 @@ import (
 // PCRProfileEnablePCRsOption is an option for AddPCRProfile that adds one or more PCRs.
 type PCRProfileEnablePCRsOption interface {
 	PCRProfileOption
-	PCRs() tpm2.HandleList
+	PCRs() (tpm2.HandleList, error)
 }
 
 // PCRProfileOption is an option for AddPCRProfile
 type PCRProfileOption interface {
-	applyOptionTo(gen *pcrProfileGenerator)
+	applyOptionTo(gen *pcrProfileGenerator) error
 }
 
 type pcrProfileSetPcrsOption struct {
@@ -52,12 +52,13 @@ func newPcrProfileSetPcrsOption(pcrs pcrFlags) *pcrProfileSetPcrsOption {
 	return out
 }
 
-func (o *pcrProfileSetPcrsOption) applyOptionTo(gen *pcrProfileGenerator) {
+func (o *pcrProfileSetPcrsOption) applyOptionTo(gen *pcrProfileGenerator) error {
 	gen.pcrs |= o.pcrs
+	return nil
 }
 
-func (o *pcrProfileSetPcrsOption) PCRs() tpm2.HandleList {
-	return o.pcrs.PCRs()
+func (o *pcrProfileSetPcrsOption) PCRs() (tpm2.HandleList, error) {
+	return o.pcrs.PCRs(), nil
 }
 
 // WithPlatformFirmwareProfile adds the SRTM, POST BIOS and Embedded Drivers
@@ -190,7 +191,10 @@ func WithKernelConfigProfile() PCRProfileEnablePCRsOption {
 // for the PCR digest. The generated profile is defined by the supplied load
 // sequences and options.
 func AddPCRProfile(pcrAlg tpm2.HashAlgorithmId, branch *secboot_tpm2.PCRProtectionProfileBranch, loadSequences *ImageLoadSequences, options ...PCRProfileOption) error {
-	gen := newPcrProfileGenerator(pcrAlg, loadSequences, options...)
+	gen, err := newPcrProfileGenerator(pcrAlg, loadSequences, options...)
+	if err != nil {
+		return err
+	}
 
 	if gen.pcrs == 0 {
 		return errors.New("must specify a profile to add")
@@ -230,7 +234,7 @@ type pcrProfileGenerator struct {
 	log *tcglog.Log
 }
 
-func newPcrProfileGenerator(pcrAlg tpm2.HashAlgorithmId, loadSequences *ImageLoadSequences, options ...PCRProfileOption) *pcrProfileGenerator {
+func newPcrProfileGenerator(pcrAlg tpm2.HashAlgorithmId, loadSequences *ImageLoadSequences, options ...PCRProfileOption) (*pcrProfileGenerator, error) {
 	gen := &pcrProfileGenerator{
 		pcrAlg:        pcrAlg,
 		loadSequences: loadSequences,
@@ -238,9 +242,11 @@ func newPcrProfileGenerator(pcrAlg tpm2.HashAlgorithmId, loadSequences *ImageLoa
 		handlers:      makeImageLoadHandlerMap(),
 	}
 	for _, opt := range options {
-		opt.applyOptionTo(gen)
+		if err := opt.applyOptionTo(gen); err != nil {
+			return nil, err
+		}
 	}
-	return gen
+	return gen, nil
 }
 
 func (g *pcrProfileGenerator) addPCRProfile(branch *secboot_tpm2.PCRProtectionProfileBranch) error {
