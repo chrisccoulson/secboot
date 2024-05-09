@@ -52,9 +52,10 @@ func (h *fwLoadHandler) measureSeparator(ctx pcrBranchContext, pcr tpm2.Handle, 
 
 	data, ok := event.Data.(*tcglog.SeparatorEventData)
 	if !ok {
+		// if the event data failed to decode, the resulting implementation is guaranteed to implement error.
 		return fmt.Errorf("cannot measure invalid separator event: %w", event.Data.(error))
 	}
-	if data.Value == tcglog.SeparatorEventErrorValue {
+	if data.IsError() {
 		return fmt.Errorf("separator indicates that an error occurred (error code from log: %d)", binary.LittleEndian.Uint32(data.Bytes()))
 	}
 	ctx.ExtendPCR(pcr, tpm2.Digest(event.Digests[ctx.PCRAlg()]))
@@ -226,17 +227,23 @@ func (h *fwLoadHandler) measureBootManagerCodePreOS(ctx pcrBranchContext) error 
 	// we've enabled follow section 8.2.4 when they measure the first EV_EFI_ACTION event (which is
 	// optional - firmware should measure a EV_OMIT_BOOT_DEVICE_EVENTS event if they are not measured,
 	// although some implementations don't do this either). I've not seen any implementations use the
-	// EV_ACTION events, and these would probably require explicit support here.
+	// mentioned EV_ACTION events, and these look like they are only relevant to BIOS boot anyway.
+	//
+	// The TCG PFP 1.06 r49 cleans this up a bit - it removes reference to the EV_ACTION events, and
+	// corrects the "Method for measurement" subsection of section 3.3.4.5 to describe that things work
+	// how we previously assumed. It does introduce a new EV_EFI_ACTION event ("Booting to <Boot####> Option")
+	// which will require explicit support in this package so it is currently rejected by the DetectSupport
+	// logic.
 	//
 	// This also retains measurements associated with the launch of any system preparation applications,
 	// although note that the inclusion of these make a profile inherently fragile. The TCG PC Client PFP
 	// spec v1.05r23 doesn't specify whether these are launched as part of the pre-OS environment or as
 	// part of the OS-present environment. It defines the boundary between the pre-OS environment and
 	// OS-present environment as a separator event measured to PCRs 0-7, but EDK2 measures a separator to
-	// PCR7 as soon as the secure boot policy is measured and system preparation applications are considered
-	// part of the pre-OS environment - they are measured to PCR4 before the pre-OS to OS-present transition
-	// is signalled by measuring separators to the remaining PCRs. The UEFI specification says that system
-	// preparation applications are executed before the ready to boot signal, which is when the transition
+	// PCR7 as soon as the secure boot configuration is measured and system preparation applications are
+	// considered part of the pre-OS environment - they are measured to PCR4 before the pre-OS to OS-present
+	// transition is signalled by measuring separators to the remaining PCRs. The UEFI specification says that
+	// system preparation applications are executed before the ready to boot signal, which is when the transition
 	// from pre-OS to OS-present occurs, so I think we can be confident that we're correct here.
 	events := h.log.Events
 	measuredSeparator := false

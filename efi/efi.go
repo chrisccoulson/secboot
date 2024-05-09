@@ -22,11 +22,12 @@ package efi
 import "github.com/canonical/go-tpm2"
 
 const (
-	platformFirmwarePCR tpm2.Handle = 0 // SRTM, POST BIOS, and Embedded Drivers
-	driversAndAppsPCR   tpm2.Handle = 2 // UEFI Drivers and UEFI Applications
-	bootManagerCodePCR  tpm2.Handle = 4 // Boot Manager Code and Boot Attempts PCR
-	secureBootPolicyPCR tpm2.Handle = 7 // Secure Boot Policy Measurements PCR
-	kernelConfigPCR     tpm2.Handle = 12
+	platformFirmwarePCR   tpm2.Handle = 0 // SRTM, POST BIOS, and Embedded Drivers
+	hostPlatformConfigPCR tpm2.Handle = 1 // Host Platform Configuration
+	driversAndAppsPCR     tpm2.Handle = 2 // UEFI Drivers and UEFI Applications
+	bootManagerCodePCR    tpm2.Handle = 4 // Boot Manager Code and Boot Attempts PCR
+	secureBootPolicyPCR   tpm2.Handle = 7 // Secure Boot Policy Measurements PCR
+	kernelConfigPCR       tpm2.Handle = 12
 )
 
 // pcrFlags corresponds to a set of PCRs. This can only represent actual PCRs, it

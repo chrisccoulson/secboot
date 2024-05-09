@@ -102,7 +102,7 @@ func WithShimSbatPolicyLatest() PCRProfileOption {
 	return shimSbatPolicyLatestOption{}
 }
 
-func (shimSbatPolicyLatestOption) applyOptionTo(gen *pcrProfileGenerator) {
+func (shimSbatPolicyLatestOption) applyOptionTo(gen *pcrProfileGenerator) error {
 	gen.varModifiers = append(gen.varModifiers, func(rootVars *rootVarsCollector) error {
 		for _, root := range rootVars.PeekAll() {
 			if err := root.WriteVar(
@@ -114,6 +114,7 @@ func (shimSbatPolicyLatestOption) applyOptionTo(gen *pcrProfileGenerator) {
 		}
 		return nil
 	})
+	return nil
 }
 
 // newestSbatLevel returns the newest SBAT revocation level from one or

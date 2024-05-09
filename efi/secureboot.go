@@ -51,7 +51,7 @@ type SignatureDBUpdate struct {
 
 type signatureDBUpdatesOption []*SignatureDBUpdate
 
-func (u signatureDBUpdatesOption) applyOptionTo(gen *pcrProfileGenerator) {
+func (u signatureDBUpdatesOption) applyOptionTo(gen *pcrProfileGenerator) error {
 	gen.varModifiers = append(gen.varModifiers, func(rootVars *rootVarsCollector) error {
 		for _, root := range rootVars.PeekAll() {
 			for _, quirk := range []signatureDBUpdateFirmwareQuirk{
@@ -70,6 +70,7 @@ func (u signatureDBUpdatesOption) applyOptionTo(gen *pcrProfileGenerator) {
 		}
 		return nil
 	})
+	return nil
 }
 
 // WithSignatureDBUpdates can be supplied to AddPCRProfile to compute the profile
