@@ -764,7 +764,7 @@ func (v *mockPcrProfileOptionVisitor) AddPCRs(pcrs ...tpm2.Handle) {
 	v.pcrs = append(v.pcrs, pcrs...)
 }
 
-func (v *mockPcrProfileOptionVisitor) SetEnvironment(env internal.HostEnvironment) {
+func (v *mockPcrProfileOptionVisitor) SetEnvironment(env internal.HostEnvironmentEFI) {
 	v.env = env
 }
 

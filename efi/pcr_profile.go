@@ -327,7 +327,7 @@ func (g *pcrProfileGenerator) AddPCRs(pcrs ...tpm2.Handle) {
 }
 
 // SetEnvironment implements [internal.PCRProfileOptionVisitor.SetEnvironment]
-func (g *pcrProfileGenerator) SetEnvironment(env internal.HostEnvironment) {
+func (g *pcrProfileGenerator) SetEnvironment(env internal.HostEnvironmentEFI) {
 	g.env = env
 }
 

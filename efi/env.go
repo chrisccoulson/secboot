@@ -29,7 +29,6 @@ import (
 	"sort"
 
 	efi "github.com/canonical/go-efilib"
-	"github.com/canonical/tcglog-parser"
 	"github.com/snapcore/secboot/efi/internal"
 	"golang.org/x/xerrors"
 )
@@ -37,15 +36,7 @@ import (
 // HostEnvironment is an interface that abstracts out an EFI environment, so that
 // consumers of the API can provide a custom mechanism to read EFI variables or parse
 // the TCG event log.
-type HostEnvironment interface {
-	// VarContext returns a context containing a VarsBackend, keyed by efi.VarsBackendKey,
-	// for interacting with EFI variables via go-efilib. This context can be passed to any
-	// go-efilib function that interacts with EFI variables.
-	VarContext() context.Context
-
-	// ReadEventLog reads the TCG event log
-	ReadEventLog() (*tcglog.Log, error)
-}
+type HostEnvironment = internal.HostEnvironmentEFI
 
 type hostEnvironmentOption struct {
 	HostEnvironment
