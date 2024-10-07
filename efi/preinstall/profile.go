@@ -90,7 +90,11 @@ var (
 	}
 )
 
-// PCRProfileOptionsFlags provides a way to customize [WithAutoTCGPCRProfile].
+// PCRProfileOptionsFlags provides a way to customize [WithAutoTCGPCRProfile]. This should
+// be considered a limited user preference to provide a user to choose a tradeoff between
+// security (and more PCR fragility) and convenience (with less PCR fragility). It is not
+// intended to provide unlimited customization in a way that would allow a user to choose
+// configurations that offet no security.
 type PCRProfileOptionsFlags uint32
 
 const (

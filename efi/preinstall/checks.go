@@ -90,7 +90,7 @@ const (
 	// PermitNoDiscreteTPMResetMitigation will prevent RunChecks from returning an error
 	// if a discrete TPM is detected and the TPM startup locality is accessible from ring
 	// 0 code (platform firmware and privileged OS code), which prevents the ability to
-	// enable a mitigation against reset attacks. See the description of the
+	// enable a limited mitigation against reset attacks. See the description of the
 	// DiscreteTPMDetected flag for more details.
 	PermitNoDiscreteTPMResetMitigation
 

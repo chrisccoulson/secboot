@@ -132,7 +132,8 @@ const (
 	// SysPrepOrder global variables defined. As these aren't under the control of the OS,
 	// these can increase the fragility of profiles that include efi.WithBootManagerCodeProfile.
 	// Support for including system preparation applications has to be opted into with the
-	// PermitSysPrepApplications flag to RunChecks.
+	// PermitSysPrepApplications flag to RunChecks, although it is recommended that they be
+	// disabled instead.
 	// This check may not run if the NoBootManagerCodeProfileSupport flag is set.
 	//
 	// Note that this flag is not persisted when serializing the results.
