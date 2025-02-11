@@ -222,10 +222,10 @@ var (
 	ErrNoTPM2Device = internal_efi.ErrNoTPM2Device
 
 	// ErrTPMLockout is returned wrapped in TPM2DeviceError if the TPM is in DA
-	// lockout mode. If the existing lockout hierarchy authorization value is not
-	// known then the TPM will most likely need to be cleared in order to fix this.
-	// This test only runs during pre-install, and not if the PostInstall flag is passed
-	// to RunChecks.
+	// lockout mode. This is checked after verifying that the authorization value for
+	// the lockout hierarchy is empty, so it may be easy to clear this as long as the
+	// lockout hierarchy is available. This test only runs during pre-install, and
+	// not if the PostInstall flag is passed to RunChecks.
 	ErrTPMLockout = errors.New("TPM is in DA lockout mode")
 
 	// ErrTPMInsufficientNVCounters is returned wrapped in TPM2DeviceError if there are
@@ -248,6 +248,14 @@ var (
 	// [github.com/canonical/go-tpm2/ppi.PPI] interface, obtained by using
 	// [github.com/canonical/go-tpm2/linux/RawDevice.PhysicalPresenceInterface].
 	ErrTPMDisabled = errors.New("TPM2 device is present but is currently disabled by the platform firmware")
+
+	// ErrTPMFailure is returned wrapped in TPM2DeviceError is the TPM device is in
+	// failure mode. A TPM device in failure mode can only execute commands to obtain
+	// test result, or fetch a limited set of permanent properties to determine the
+	// manufactuer, vendor name or firmware version. Resetting a device in failure mode
+	// may clear it but it's possible that the failure may occur again during the next
+	// boot cycle.
+	ErrTPMFailure = errors.New("TPM2 device is in failure mode")
 )
 
 // TPMHierarchyOwnedError is returned wrapped in [TPM2DeviceError] if the authorization value
@@ -271,6 +279,33 @@ func (e *TPM2HierarchyOwnedError) Error() string {
 	}
 
 	return "TPM " + hierarchy + " hierarchy is currently owned"
+}
+
+// TPMHierarchyPolicySetError is returned wrapped in [TPM2DeviceError] if there is an
+// authorization policy defined for the specified hierarchy, but the PostInstallChecks
+// flag isn't set. This is checked after checking that the authorization value isn't set,
+// and so is trivial to resolve with the TPM2_SetPrimaryPolicy command. As a policy can
+// be used for user auth, if a hierarchy has an authorization policy during pre-install,
+// and the authorization value is subsequently set by the current owner, an existing
+// policy may provide an authorization bypass by a previous owner.
+type TPM2HierarchyPolicySetError struct {
+	Hierarchy tpm2.Handle
+}
+
+func (e *TPM2HierarchyPolicySetError) Error() string {
+	var hierarchy string
+	switch e.Hierarchy {
+	case tpm2.HandleOwner:
+		hierarchy = "owner"
+	case tpm2.HandleLockout:
+		hierarchy = "lockout"
+	case tpm2.HandleEndorsement:
+		hierarchy = "endorsement"
+	default:
+		hierarchy = "unknwon"
+	}
+
+	return "TPM " + hierarchy + " hierarchy currently has an authorization policy defined"
 }
 
 // Errors related to general TCG log checks and PCR bank selection.

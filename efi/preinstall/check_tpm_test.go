@@ -321,6 +321,46 @@ func (s *tpmSuite) TestOpenAndCheckTPM2DeviceLockout(c *C) {
 	c.Check(dev.NumberOpen(), Equals, int(0))
 }
 
+func (s *tpmSuite) TestOpenAndCheckTPM2DeviceHierarchyOwnershipHasPriorityOverLockout1(c *C) {
+	s.addTPMPropertyModifiers(c, map[tpm2.Property]uint32{
+		tpm2.PropertyPSFamilyIndicator: 1,
+		tpm2.PropertyManufacturer:      uint32(tpm2.TPMManufacturerINTC),
+	})
+
+	s.HierarchyChangeAuth(c, tpm2.HandleOwner, []byte("1234"))
+
+	// Trip the DA logic by setting newMaxTries to 0
+	c.Assert(s.TPM.DictionaryAttackParameters(s.TPM.LockoutHandleContext(), 0, 10000, 10000, nil), IsNil)
+
+	dev := tpm2_testutil.NewTransportBackedDevice(s.Transport, false, 1)
+	env := efitest.NewMockHostEnvironmentWithOpts(efitest.WithTPMDevice(dev))
+	_, _, err := OpenAndCheckTPM2Device(env, 0)
+	c.Check(err, ErrorMatches, `TPM owner hierarchy is currently owned`)
+	var he *TPM2HierarchyOwnedError
+	c.Check(errors.As(err, &he), testutil.IsTrue)
+	c.Check(dev.NumberOpen(), Equals, int(0))
+}
+
+func (s *tpmSuite) TestOpenAndCheckTPM2DeviceHierarchyOwnershipHasPriorityOverLockout2(c *C) {
+	s.addTPMPropertyModifiers(c, map[tpm2.Property]uint32{
+		tpm2.PropertyPSFamilyIndicator: 1,
+		tpm2.PropertyManufacturer:      uint32(tpm2.TPMManufacturerINTC),
+	})
+
+	c.Assert(s.TPM.SetPrimaryPolicy(s.TPM.OwnerHandleContext(), testutil.DecodeHexString(c, "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"), tpm2.HashAlgorithmSHA256, nil), IsNil)
+
+	// Trip the DA logic by setting newMaxTries to 0
+	c.Assert(s.TPM.DictionaryAttackParameters(s.TPM.LockoutHandleContext(), 0, 10000, 10000, nil), IsNil)
+
+	dev := tpm2_testutil.NewTransportBackedDevice(s.Transport, false, 1)
+	env := efitest.NewMockHostEnvironmentWithOpts(efitest.WithTPMDevice(dev))
+	_, _, err := OpenAndCheckTPM2Device(env, 0)
+	c.Check(err, ErrorMatches, `TPM owner hierarchy currently has an authorization policy defined`)
+	var e *TPM2HierarchyPolicySetError
+	c.Check(errors.As(err, &e), testutil.IsTrue)
+	c.Check(dev.NumberOpen(), Equals, int(0))
+}
+
 func (s *tpmSuite) TestOpenAndCheckTPM2DeviceAlreadyOwnedLockout(c *C) {
 	s.addTPMPropertyModifiers(c, map[tpm2.Property]uint32{
 		tpm2.PropertyPSFamilyIndicator: 1,
@@ -375,6 +415,42 @@ func (s *tpmSuite) TestOpenAndCheckTPM2DeviceAlreadyOwnedEndorsement(c *C) {
 	c.Check(dev.NumberOpen(), Equals, int(0))
 }
 
+func (s *tpmSuite) TestOpenAndCheckTPM2DevicePolicySetOwner(c *C) {
+	s.addTPMPropertyModifiers(c, map[tpm2.Property]uint32{
+		tpm2.PropertyPSFamilyIndicator: 1,
+		tpm2.PropertyManufacturer:      uint32(tpm2.TPMManufacturerINTC),
+	})
+
+	// Set an authorization policy and test that we get the appropriate error.
+	c.Assert(s.TPM.SetPrimaryPolicy(s.TPM.OwnerHandleContext(), testutil.DecodeHexString(c, "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"), tpm2.HashAlgorithmSHA256, nil), IsNil)
+
+	dev := tpm2_testutil.NewTransportBackedDevice(s.Transport, false, 1)
+	env := efitest.NewMockHostEnvironmentWithOpts(efitest.WithTPMDevice(dev))
+	_, _, err := OpenAndCheckTPM2Device(env, 0)
+	c.Check(err, ErrorMatches, `TPM owner hierarchy currently has an authorization policy defined`)
+	var e *TPM2HierarchyPolicySetError
+	c.Check(errors.As(err, &e), testutil.IsTrue)
+	c.Check(dev.NumberOpen(), Equals, int(0))
+}
+
+func (s *tpmSuite) TestOpenAndCheckTPM2DevicePolicySetEndorsement(c *C) {
+	s.addTPMPropertyModifiers(c, map[tpm2.Property]uint32{
+		tpm2.PropertyPSFamilyIndicator: 1,
+		tpm2.PropertyManufacturer:      uint32(tpm2.TPMManufacturerINTC),
+	})
+
+	// Set an authorization policy and test that we get the appropriate error.
+	c.Assert(s.TPM.SetPrimaryPolicy(s.TPM.EndorsementHandleContext(), testutil.DecodeHexString(c, "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"), tpm2.HashAlgorithmSHA256, nil), IsNil)
+
+	dev := tpm2_testutil.NewTransportBackedDevice(s.Transport, false, 1)
+	env := efitest.NewMockHostEnvironmentWithOpts(efitest.WithTPMDevice(dev))
+	_, _, err := OpenAndCheckTPM2Device(env, 0)
+	c.Check(err, ErrorMatches, `TPM endorsement hierarchy currently has an authorization policy defined`)
+	var e *TPM2HierarchyPolicySetError
+	c.Check(errors.As(err, &e), testutil.IsTrue)
+	c.Check(dev.NumberOpen(), Equals, int(0))
+}
+
 func (s *tpmSuite) TestOpenAndCheckTPM2DeviceIsNotPCClient(c *C) {
 	s.addTPMPropertyModifiers(c, map[tpm2.Property]uint32{
 		tpm2.PropertyPSFamilyIndicator: 2, // This is defined as PDA in the reference library specs
@@ -411,4 +487,13 @@ func (s *tpmSuite) TestOpenAndCheckTPM2DeviceInsufficientNVCountersPreInstall(c 
 	_, _, err := OpenAndCheckTPM2Device(env, 0)
 	c.Check(err, Equals, ErrTPMInsufficientNVCounters)
 	c.Check(dev.NumberOpen(), Equals, int(0))
+}
+
+func (s *tpmSuite) TestOpenAndCheckTPM2DeviceFailureMode(c *C) {
+	c.Check(s.Mssim(c).TestFailureMode(), IsNil)
+
+	dev := tpm2_testutil.NewTransportBackedDevice(s.Transport, false, 1)
+	env := efitest.NewMockHostEnvironmentWithOpts(efitest.WithTPMDevice(dev))
+	_, _, err := OpenAndCheckTPM2Device(env, 0)
+	c.Check(err, Equals, ErrTPMFailure)
 }
