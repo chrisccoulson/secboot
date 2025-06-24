@@ -336,6 +336,18 @@ func (g *pcrProfileGenerator) AddInitialVariablesModifier(fn internal_efi.Initia
 	g.varModifiers = append(g.varModifiers, fn)
 }
 
+type firmwareImageLoadParams struct {
+	fn func(...loadParams) []loadParams
+}
+
+func (p *firmwareImageLoadParams) applyTo(params ...loadParams) []loadParams {
+	return p.fn(params...)
+}
+
+func (g *pcrProfileGenerator) AddImageLoadParams(fn func(...loadParams) []loadParams) {
+	g.loadSequences.params = append(g.loadSequences.params, &firmwareImageLoadParams{fn: fn})
+}
+
 // PCRAlg implements pcrProfileContext.PCRAlg.
 func (g *pcrProfileGenerator) PCRAlg() tpm2.HashAlgorithmId {
 	return g.pcrAlg
@@ -356,4 +368,25 @@ type pcrProfileContext interface {
 	PCRs() pcrFlags
 
 	ImageLoadHandlerMap() imageLoadHandlerMap
+}
+
+const demoFwStartBranchParamKey loadParamsKey = "demo_fw_start_branch"
+
+type withDemoFwStartBranches []int
+
+func (o withDemoFwStartBranches) ApplyOptionTo(visitor internal_efi.PCRProfileOptionVisitor) error {
+	visitor.AddImageLoadParams(func(params ...loadParams) []loadParams {
+		return applyMultipleOptionsToLoadParams[int](demoFwStartBranchParamKey, []int(o), params...)
+	})
+	return nil
+}
+
+// WithDemoFirwareStartBranches provides a demo of how to use PCRProfileOption
+// to generate a profile with multiple firmware start branches, each called
+// with different parameters - in this case, they are each called with one of
+// the supplied integers (one branch per integer), accessed via the
+// "demo_fw_start_branch" key on the provided loadParams, accessed via the
+// Params method on the pcrBranchContext.
+func WithDemoFwStartBranches(n ...int) PCRProfileOption {
+	return withDemoFwStartBranches(n)
 }
